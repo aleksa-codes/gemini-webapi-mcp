@@ -72,9 +72,9 @@ def _load_alpha_map(size: int) -> "np.ndarray":
 def _remove_watermark(image_path: str) -> bool:
     """Remove Gemini sparkle watermark using Reverse Alpha Blending.
 
-    Detects watermark size and position from image dimensions:
-    - Both sides > 1024: 96px logo, 64px margins
-    - Otherwise: 48px logo, 32px margins
+    Watermark scales with the long side of the image (re-measured May 2026,
+    after Google moved/resized the mark): logo = 4% of long side, placed at an
+    8% margin from the bottom-right corner.
 
     Returns True if watermark was removed.
     """
@@ -87,10 +87,12 @@ def _remove_watermark(image_path: str) -> bool:
     if w < 200 or h < 200:
         return False
 
-    if w > 1024 and h > 1024:
-        logo_size, margin_right, margin_bottom = 96, 64, 64
-    else:
-        logo_size, margin_right, margin_bottom = 48, 32, 32
+    # Watermark scales with image resolution (measured May 2026):
+    #   logo  = 0.04 * long_side  (96px @ 2400, 48px @ 1200)
+    #   margin = 0.08 * long_side (192px @ 2400, 96px @ 1200) from bottom-right
+    long_side = max(w, h)
+    logo_size = round(0.04 * long_side)
+    margin_right = margin_bottom = round(0.08 * long_side)
 
     wm_x = w - margin_right - logo_size
     wm_y = h - margin_bottom - logo_size
