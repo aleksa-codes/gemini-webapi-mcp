@@ -51,43 +51,9 @@ DEFAULT_MODEL = "gemini-3.0-flash"
 # Recalibrate when Google changes the mark: generate flat black + grey frames
 # (GEMINI_WM_KEEP=1) per orientation and re-derive wm_{alpha,premult}_96[_ls].npy.
 # ---------------------------------------------------------------------------
-_WM_SEARCH = 288            # px window beyond the logo to scan from the corner
-_WM_MIN_NCC = 0.35          # below this we assume no watermark present
-                            # (textured backgrounds depress NCC to ~0.48)
+_WM_MIN_DROP = 0.12         # min sparkle-correlation drop a real removal must yield
+_WM_MARGINS = {96: (64, 192), 48: (32, 96)}  # logo size -> known corner margins
 _wm_maps: dict[tuple, tuple] = {}   # (size, orient) -> (alpha[h,w], premult[h,w,3])
-
-
-def _ncc_best(gray, tmpl):
-    """Best normalized cross-correlation of template over gray (top-left coords).
-
-    Returns (y, x, score). Numerator via FFT, local mean/variance via integral
-    images — standard TM_CCOEFF_NORMED without an OpenCV dependency.
-    """
-    import numpy as np
-    from numpy.fft import rfft2, irfft2
-
-    s = tmpl.shape[0]
-    H, W = gray.shape
-    if H < s or W < s:
-        return 0, 0, -1.0
-    t = tmpl - tmpl.mean()
-    tn = np.sqrt((t * t).sum()) or 1e-6
-    corr = irfft2(rfft2(gray, s=(H, W)) * rfft2(t[::-1, ::-1], s=(H, W)), s=(H, W))
-    num = corr[s - 1:H, s - 1:W]                 # sum(patch * zero-mean-template)
-    ii = np.cumsum(np.cumsum(gray, 0), 1)
-    ii2 = np.cumsum(np.cumsum(gray * gray, 0), 1)
-
-    def ws(I):
-        I = np.pad(I, ((1, 0), (1, 0)))
-        return I[s:, s:] + I[:-s, :-s] - I[s:, :-s] - I[:-s, s:]
-
-    S, S2, n = ws(ii), ws(ii2), s * s
-    # Floor the patch variance: on flat regions (variance ~0) the ratio would
-    # blow up to spurious huge scores, so clamp to a real noise level (std ~2).
-    var = np.maximum(S2 - S * S / n, n * 4.0)
-    ncc = num / (np.sqrt(var) * tn)
-    y, x = np.unravel_index(np.argmax(ncc), ncc.shape)
-    return int(y), int(x), float(ncc.max())
 
 
 def _load_wm_map(size: int, orient: str = "portrait") -> tuple:
@@ -128,9 +94,10 @@ def _load_wm_map(size: int, orient: str = "portrait") -> tuple:
 
 
 def _remove_watermark(image_path: str) -> bool:
-    """Remove the Gemini sparkle: NCC anchor search locates it near the
-    bottom-right corner, then reverse alpha blending undoes it exactly —
-    original = (watermarked - alpha*logo) / (1 - alpha) — preserving content.
+    """Remove the Gemini sparkle: evaluate the deterministic bottom-right corner
+    anchors, pick the one whose reverse alpha blend flattens the sparkle most,
+    then undo it exactly — original = (watermarked - alpha*logo) / (1 - alpha) —
+    preserving content.
 
     Returns True if a watermark was found and removed.
     """
@@ -147,33 +114,56 @@ def _remove_watermark(image_path: str) -> bool:
         return False
 
     arr = np.asarray(img, dtype=np.float32)
-    gray = arr.mean(axis=2)
 
-    # Logo size is fixed by the output resolution (Gemini renders 96px on its
-    # large native outputs, 48px on small ones) — not variable per image, so
-    # picking it by resolution avoids a spurious smaller match outscoring the
-    # real one on textured backgrounds. NCC then locates it (margin varies).
-    # Portrait/tall (h>w) and square/landscape (w>=h) get different watermarks,
-    # placed at different fixed margins (192px vs 64px) — pick the matching map.
-    orient = "portrait" if h > w else "landscape"
-    margin = 192 if h > w else 64
+    # The watermark position is deterministic from the output resolution, so we
+    # check the known fixed corner anchors directly rather than running an open
+    # NCC search. A free search wanders onto spurious sparkle-like correlations on
+    # busy/dark artwork (missing the faint real mark entirely) and onto the empty
+    # 192px anchor when the real mark sits at the canonical 64px one. Logo size
+    # scales with resolution (96px on large outputs, 48px on small previews); each
+    # size has a canonical margin plus the 192/96px variant Gemini added 2026-05.
     size = 96 if max(w, h) >= 1000 else 48
-    win = size + _WM_SEARCH
-    gy0, gx0 = max(0, h - win), max(0, w - win)
-    sub = gray[gy0:, gx0:]
-    alpha, _ = _load_wm_map(size, orient)
-    ry, rx, score = _ncc_best(sub, alpha)
-    y0, x0 = gy0 + ry, gx0 + rx
+    margins = _WM_MARGINS[size]
 
-    if score < _WM_MIN_NCC:
-        logger.info("No watermark detected (best NCC %.3f)", score)
+    def _sparkle_ncc(patch_gray, orient):
+        a, _ = _load_wm_map(size, orient)
+        t, q = a - a.mean(), patch_gray - patch_gray.mean()
+        return float((t * q).sum() / (np.sqrt((t * t).sum() * (q * q).sum()) + 1e-6))
+
+    # Gemini places the mark exactly on these anchors (no sub-pixel jitter on real
+    # outputs), so we evaluate each fixed (margin, orientation) candidate in place
+    # and score by two quantities:
+    #   drop      = |sparkle NCC before| - |after|  (did a real mark get removed)
+    #   |after|   = leftover sparkle correlation     (how clean the result is)
+    # A real mark starts strong and flattens (large positive drop). An empty anchor
+    # is the opposite: subtracting the premult INJECTS a dark sparkle, raising
+    # |after| above |before| so the drop goes negative — that is what rejects the
+    # wrong (empty) margin and any clean image. We keep the candidate with the
+    # largest drop, which also selects the correct orientation: the matching
+    # template flattens the sparkle, a wrong-shaped one leaves more behind.
+    # Absolute |after| is not a usable gate on its own — structured backgrounds can
+    # correlate with the sparkle shape (|after| ~0.3 on clean content) — so the
+    # signed drop, not the raw residual, is the detector.
+    best = None  # (drop, residual, orient, x0, y0)
+    for m in margins:
+        x0, y0 = w - size - m, h - size - m
+        if x0 < 0 or y0 < 0:
+            continue
+        for orient in ("portrait", "landscape"):
+            alpha, premult = _load_wm_map(size, orient)
+            inv_ = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
+            box = arr[y0:y0 + size, x0:x0 + size]
+            before = abs(_sparkle_ncc(box.mean(2), orient))
+            after = abs(_sparkle_ncc(
+                np.clip((box - premult) / inv_, 0, 255).mean(2), orient))
+            if best is None or before - after > best[0]:
+                best = (before - after, after, orient, x0, y0)
+
+    if best is None or best[0] < _WM_MIN_DROP:
+        logger.info("No watermark detected (best drop %.3f)",
+                    best[0] if best else -1.0)
         return False
-
-    # NCC can land 1px off on textured backgrounds, which leaves a faint fringe —
-    # snap to the known margin when NCC agrees, giving pixel-exact registration.
-    dy, dx = h - size - margin, w - size - margin
-    if abs(y0 - dy) <= 6 and abs(x0 - dx) <= 6:
-        y0, x0 = dy, dx
+    drop, residual, orient, x0, y0 = best
 
     alpha, premult = _load_wm_map(size, orient)
     inv = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
@@ -181,7 +171,8 @@ def _remove_watermark(image_path: str) -> bool:
     arr[y0:y0 + size, x0:x0 + size] = np.clip((box - premult) / inv, 0, 255)
 
     Image.fromarray(arr.astype(np.uint8)).save(image_path)
-    logger.info("Watermark removed (size %d, NCC %.3f) at (%d,%d)", size, score, x0, y0)
+    logger.info("Watermark removed (%s size %d, drop %.3f resid %.3f) at (%d,%d)",
+                orient, size, drop, residual, x0, y0)
     return True
 
 
