@@ -27,7 +27,7 @@
 - **Редактирование изображений** — отправьте картинку + промпт и получите изменённую версию
 - **Анализ файлов** — видео, изображения, PDF, документы
 - **Текстовый чат** с Gemini (Flash, Pro, Flash-Thinking)
-- **Авто-удаление вотермарки** — математически точное удаление sparkle-метки Gemini (Reverse Alpha Blending)
+- **Авто-удаление вотермарки** — sparkle-метка Gemini убирается через [gwt-mini](https://github.com/allenk/GeminiWatermarkTool) от [@allenk](https://github.com/allenk) (поддержка профилей Gemini 3.5 и legacy, macOS / Windows / Linux)
 - **Авто-аутентификация** через cookies из Chrome
 
 ## Быстрый старт
@@ -50,6 +50,7 @@ uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-weba
 git clone https://github.com/AndyShaman/gemini-webapi-mcp.git
 cd gemini-webapi-mcp
 uv sync
+python scripts/install_gwt.py   # опционально: удаление вотермарки (см. ниже)
 uv run gemini-webapi-mcp
 ```
 
@@ -190,7 +191,15 @@ uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-weba
 
 ## Удаление вотермарки
 
-Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер автоматически удаляет её с помощью алгоритма [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) — математически точного восстановления оригинальных пикселей. Никаких дополнительных зависимостей или скачивания моделей не требуется.
+Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер вызывает CLI-утилиту `gwt-mini` от [@allenk](https://github.com/allenk) — она реализует Reverse Alpha Blending с поддержкой профилей Gemini 3.5 и legacy и работает в офлайне, без ML-моделей.
+
+Установка одной командой из корня клонированного репозитория (macOS, Linux, Windows):
+
+```bash
+python scripts/install_gwt.py
+```
+
+Скрипт скачивает бинарник `gwt-mini` из релизов `allenk/GeminiWatermarkTool`, проверяет SHA-256 и кладёт в `tools/gwt/`. Бинарник не коммитится в репозиторий. Без него сервер продолжает работать — просто оставляет вотермарку на месте и пишет предупреждение в лог. Чтобы временно отключить удаление, задайте `GEMINI_WM_KEEP=1`.
 
 ## Инструменты
 
@@ -237,7 +246,7 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай кратк
 
 Этот проект построен на основе библиотеки [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) от [@HanaokaYuzu](https://github.com/HanaokaYuzu) (форк [@xob0t](https://github.com/xob0t/Gemini-API) с поддержкой curl_cffi) — реверс-инжиниринговой асинхронной Python-обёртки для веб-приложения Google Gemini. Лицензия: AGPL-3.0.
 
-Удаление вотермарки основано на алгоритме [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) от [@allenk](https://github.com/allenk) (MIT License) и alpha-картах из [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) от [@GargantuaX](https://github.com/GargantuaX) (MIT License).
+Удаление вотермарки выполняется бинарником [`gwt-mini`](https://github.com/allenk/GeminiWatermarkTool) от [@allenk](https://github.com/allenk) (Allen Kuo, MIT License) — он реализует алгоритм Reverse Alpha Blending и держит откалиброванные профили под текущий и legacy формат метки. Калибровочные alpha-карты для legacy-профиля изначально пришли из [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) от [@GargantuaX](https://github.com/GargantuaX) (MIT License). Бинарник скачивается локально скриптом `scripts/install_gwt.py` и не входит в этот репозиторий.
 
 ## Лицензия
 
@@ -276,7 +285,7 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай кратк
 - **Image editing** — send an image + prompt to get a modified version
 - **File analysis** — video, images, PDF, documents
 - **Text chat** with Gemini (Flash, Pro, Flash-Thinking)
-- **Auto watermark removal** — lossless sparkle mark removal using Reverse Alpha Blending
+- **Auto watermark removal** — Gemini's sparkle mark is stripped via [gwt-mini](https://github.com/allenk/GeminiWatermarkTool) by [@allenk](https://github.com/allenk) (Gemini 3.5 + legacy profiles, macOS / Windows / Linux)
 - **Auto-authentication** via Chrome browser cookies
 
 ## Quick Start
@@ -299,6 +308,7 @@ uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-weba
 git clone https://github.com/AndyShaman/gemini-webapi-mcp.git
 cd gemini-webapi-mcp
 uv sync
+python scripts/install_gwt.py   # optional: watermark removal (see below)
 uv run gemini-webapi-mcp
 ```
 
@@ -439,7 +449,15 @@ If the 2x version is unavailable (timeout, network error), the server automatica
 
 ## Watermark Removal
 
-Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server automatically removes it using the [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) algorithm — a mathematically lossless recovery of original pixel values. No extra dependencies or model downloads required.
+Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server shells out to [`gwt-mini`](https://github.com/allenk/GeminiWatermarkTool) by [@allenk](https://github.com/allenk) — it implements Reverse Alpha Blending with calibrated profiles for both current Gemini 3.5 and the legacy mark, runs offline, no ML models.
+
+Install with one command from a cloned checkout (macOS, Linux, Windows):
+
+```bash
+python scripts/install_gwt.py
+```
+
+The script downloads the `gwt-mini` binary from `allenk/GeminiWatermarkTool` releases, verifies the SHA-256, and places it under `tools/gwt/`. The binary is **not** committed. Without it the server keeps working — it just leaves the watermark in place and logs a warning. Set `GEMINI_WM_KEEP=1` to disable removal even when the binary is installed.
 
 ## Tools
 
@@ -486,7 +504,7 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Summarize key points")
 
 This project is built on top of [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) by [@HanaokaYuzu](https://github.com/HanaokaYuzu) (fork by [@xob0t](https://github.com/xob0t/Gemini-API) with curl_cffi support) — a reverse-engineered async Python wrapper for the Google Gemini web app. Licensed under AGPL-3.0.
 
-Watermark removal based on the [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) algorithm by [@allenk](https://github.com/allenk) (MIT License) and alpha maps from [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) by [@GargantuaX](https://github.com/GargantuaX) (MIT License).
+Watermark removal is performed by the [`gwt-mini`](https://github.com/allenk/GeminiWatermarkTool) binary by [@allenk](https://github.com/allenk) (Allen Kuo, MIT License) — it implements Reverse Alpha Blending and ships calibrated profiles for both the current and legacy Gemini sparkle. Legacy-profile alpha maps originally came from [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) by [@GargantuaX](https://github.com/GargantuaX) (MIT License). The binary is fetched locally by `scripts/install_gwt.py` and is not redistributed with this repository.
 
 ## License
 

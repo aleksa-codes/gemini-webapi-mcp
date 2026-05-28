@@ -16,3 +16,6 @@ build/
 .env
 .uv/
 uv.lock
+
+# gwt-mini binary — installed via `python scripts/install_gwt.py`, not committed
+/tools/gwt/

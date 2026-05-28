@@ -48,10 +48,9 @@ DOWNLOAD_TIMEOUT = float(os.environ.get("GEMINI_DOWNLOAD_TIMEOUT", "60"))
 
 # Optional stage timing: set GEMINI_DEBUG_TIMING=1 to log per-stage wall-time.
 _DEBUG_TIMING = os.environ.get("GEMINI_DEBUG_TIMING") == "1"
-# Skip the c8o8Fe 2x-upscale RPC by default — the browser never calls it, and it
-# added 44..68s per image plus stale-URL 400s. We download the preview URL at full
-# size (=s0) like the browser does. Set GEMINI_SKIP_2X=0 to re-enable the 2x RPC.
-_SKIP_2X = os.environ.get("GEMINI_SKIP_2X", "1") != "0"
+# c8o8Fe 2x-upscale RPC gives full-resolution downloads (~1792×2390 for portrait
+# vs ~896×1200 preview). Costs ~20s/image extra; disable with GEMINI_SKIP_2X=1.
+_SKIP_2X = os.environ.get("GEMINI_SKIP_2X", "0") != "0"
 # Skip the model-id remap + version bump in patched_request (which forces the
 # slow thinking-advanced model). Set to "1" to send the requested model as-is.
 _NO_REMAP = os.environ.get("GEMINI_NO_REMAP") == "1"
@@ -66,155 +65,63 @@ def _stage(label: str, t0: float) -> float:
     return now
 
 # ---------------------------------------------------------------------------
-# Watermark removal — Reverse Alpha Blending + NCC anchor search
-# The Gemini sparkle is composited near the bottom-right corner. Its size is
-# fixed (96px for large outputs, 48px for small), but Google renders TWO variants
-# and places each at its own corner margin (measured May 2026):
-#   * portrait/tall outputs (h>w): weaker mark, 192px margin
-#   * square/landscape  (w>=h):    ~1.7x stronger mark, 64px margin
-# So we don't predict the position: a normalized cross-correlation (NCC) anchor
-# search locates the mark exactly, then we undo the exact blend
-#   watermarked = alpha*logo + (1-alpha)*original
-# using the orientation's calibrated map (premult = alpha*logo, plus an alpha map).
-# This removes only the sparkle and preserves whatever content sat under it —
-# no box, no smear, no ghost — on any background or aspect ratio.
-# Recalibrate when Google changes the mark: generate flat black + grey frames
-# (GEMINI_WM_KEEP=1) per orientation and re-derive wm_{alpha,premult}_96[_ls].npy.
+# Watermark removal — delegated to Allen Kuo's gwt-mini (GeminiWatermarkTool).
+# Upstream: https://github.com/allenk/GeminiWatermarkTool  (MIT, v0.3.1+)
+# Reverse alpha blend with calibrated 48/96 masks, three-stage NCC detection
+# and automatic legacy-profile fallback for older outputs. Install via
+# `python scripts/install_gwt.py` — binary lives at tools/gwt/gwt-mini.
 # ---------------------------------------------------------------------------
-_WM_MIN_DROP = 0.12         # min sparkle-correlation drop a real removal must yield
-_WM_MARGINS = {96: (64, 192), 48: (32, 96)}  # logo size -> known corner margins
-_wm_maps: dict[tuple, tuple] = {}   # (size, orient) -> (alpha[h,w], premult[h,w,3])
-
-
-def _load_wm_map(size: int, orient: str = "portrait") -> tuple:
-    """Load and cache the (alpha, premult) watermark map for a logo size/orientation.
-
-    Gemini renders a different sparkle for portrait/tall outputs (h>w) than for
-    square/landscape (w>=h) — the latter is ~1.7x stronger with a different edge
-    profile — so each orientation has its own calibrated map. Maps are captured
-    at 96px; smaller sizes are bilinearly downscaled.
-    """
-    key = (size, orient)
-    if key in _wm_maps:
-        return _wm_maps[key]
-
-    import numpy as np
-    from importlib.resources import files as pkg_files
-    from PIL import Image
-
-    suffix = "_ls" if orient == "landscape" else ""
-    assets = pkg_files("gemini_webapi_mcp.assets")
-    # Prefer a map calibrated natively at the requested size (e.g. the 48px
-    # landscape map for the fast flash model's 1408x768 output); otherwise fall
-    # back to the 96px master and bilinearly downscale.
-    src = 96
-    if assets.joinpath(f"wm_alpha_{size}{suffix}.npy").is_file():
-        src = size
-    with assets.joinpath(f"wm_alpha_{src}{suffix}.npy").open("rb") as f:
-        alpha = np.load(f)
-    with assets.joinpath(f"wm_premult_{src}{suffix}.npy").open("rb") as f:
-        premult = np.load(f)
-
-    if size != alpha.shape[0]:
-        alpha = np.asarray(
-            Image.fromarray((alpha * 255.0).astype(np.uint8)).resize((size, size), Image.BILINEAR),
-            dtype=np.float32,
-        ) / 255.0
-        premult = np.asarray(
-            Image.fromarray(np.clip(premult, 0, 255).astype(np.uint8)).resize((size, size), Image.BILINEAR),
-            dtype=np.float32,
-        )
-
-    _wm_maps[key] = (alpha, premult)
-    return _wm_maps[key]
+_GWT_BINARY = Path(__file__).resolve().parents[2] / "tools" / "gwt" / (
+    "gwt-mini.exe" if sys.platform == "win32" else "gwt-mini"
+)
+_gwt_missing_warned = False
 
 
 def _remove_watermark(image_path: str) -> bool:
-    """Remove the Gemini sparkle: evaluate the deterministic bottom-right corner
-    anchors, pick the one whose reverse alpha blend flattens the sparkle most,
-    then undo it exactly — original = (watermarked - alpha*logo) / (1 - alpha) —
-    preserving content.
+    """Run gwt-mini on image_path, replacing it in place on success.
 
-    Returns True if a watermark was found and removed.
+    Returns True on successful removal, False otherwise (binary missing,
+    no watermark detected, subprocess error). Honours GEMINI_WM_KEEP=1
+    as a kill-switch for diagnostics.
     """
-    import os
-    if os.environ.get("GEMINI_WM_KEEP") == "1":   # diagnostic: keep raw watermark
+    global _gwt_missing_warned
+    import subprocess
+    import tempfile
+
+    if os.environ.get("GEMINI_WM_KEEP") == "1":
         return False
 
-    import numpy as np
-    from PIL import Image
-
-    img = Image.open(image_path).convert("RGB")
-    w, h = img.size
-    if w < 200 or h < 200:
+    if not _GWT_BINARY.exists():
+        if not _gwt_missing_warned:
+            logger.warning(
+                "gwt-mini not found at %s — watermark NOT removed. "
+                "Run `python scripts/install_gwt.py` to install.",
+                _GWT_BINARY,
+            )
+            _gwt_missing_warned = True
         return False
 
-    arr = np.asarray(img, dtype=np.float32)
-
-    # The watermark position is deterministic from the output resolution, so we
-    # check the known fixed corner anchors directly rather than running an open
-    # NCC search. A free search wanders onto spurious sparkle-like correlations on
-    # busy/dark artwork (missing the faint real mark entirely) and onto the empty
-    # 192px anchor when the real mark sits at the canonical 64px one. Logo size is
-    # not reliably predictable from resolution alone — the 2752x1536 thinking
-    # output uses 96px while the fast flash 1408x768 output uses 48px — so we try
-    # BOTH sizes and let the signed-drop detector self-select the real one. Each
-    # size has its canonical margin plus the larger variant Gemini added 2026-05.
-    candidate_sizes = (48, 96)
-
-    def _sparkle_ncc(patch_gray, size, orient):
-        a, _ = _load_wm_map(size, orient)
-        t, q = a - a.mean(), patch_gray - patch_gray.mean()
-        return float((t * q).sum() / (np.sqrt((t * t).sum() * (q * q).sum()) + 1e-6))
-
-    # Gemini places the mark exactly on these anchors (no sub-pixel jitter on real
-    # outputs), so we evaluate each fixed (margin, orientation) candidate in place
-    # and score by two quantities:
-    #   drop      = |sparkle NCC before| - |after|  (did a real mark get removed)
-    #   |after|   = leftover sparkle correlation     (how clean the result is)
-    # A real mark starts strong and flattens (large positive drop). An empty anchor
-    # is the opposite: subtracting the premult INJECTS a dark sparkle, raising
-    # |after| above |before| so the drop goes negative — that is what rejects the
-    # wrong (empty) margin and any clean image. We keep the candidate with the
-    # largest drop, which also selects the correct orientation: the matching
-    # template flattens the sparkle, a wrong-shaped one leaves more behind.
-    # Absolute |after| is not a usable gate on its own — structured backgrounds can
-    # correlate with the sparkle shape (|after| ~0.3 on clean content) — so the
-    # signed drop, not the raw residual, is the detector.
-    best = None  # (drop, residual, size, orient, x0, y0)
-    for size in candidate_sizes:
-        for m in _WM_MARGINS[size]:
-            x0, y0 = w - size - m, h - size - m
-            if x0 < 0 or y0 < 0:
-                continue
-            for orient in ("portrait", "landscape"):
-                alpha, premult = _load_wm_map(size, orient)
-                inv_ = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
-                box = arr[y0:y0 + size, x0:x0 + size]
-                before = abs(_sparkle_ncc(box.mean(2), size, orient))
-                after = abs(_sparkle_ncc(
-                    np.clip((box - premult) / inv_, 0, 255).mean(2), size, orient))
-                if best is None or before - after > best[0]:
-                    best = (before - after, after, size, orient, x0, y0)
-
-    if best is None or best[0] < _WM_MIN_DROP:
-        logger.info("No watermark detected (best drop %.3f)",
-                    best[0] if best else -1.0)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        result = subprocess.run(
+            [str(_GWT_BINARY), "--no-banner", "-q", "-i", image_path, "-o", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        out = Path(tmp_path)
+        if result.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            os.replace(tmp_path, image_path)
+            logger.info("Watermark removed via gwt-mini")
+            return True
+        logger.info("gwt-mini found no watermark (rc=%d)", result.returncode)
         return False
-    drop, residual, size, orient, x0, y0 = best
-
-    alpha, premult = _load_wm_map(size, orient)
-    inv = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
-    # Reverse the alpha blend exactly: original = (watermarked - alpha*logo)/(1-alpha).
-    # Only pixels the sparkle actually covers (alpha>0) change; everywhere else
-    # alpha≈0 so the math is identity and content passes through untouched — no box.
-    box = arr[y0:y0 + size, x0:x0 + size]
-    arr[y0:y0 + size, x0:x0 + size] = np.clip((box - premult) / inv, 0, 255)
-
-    Image.fromarray(arr.astype(np.uint8)).save(image_path)
-    logger.info("Watermark removed (%s size %d, drop %.3f resid %.3f) at (%d,%d)",
-                orient, size, drop, residual, x0, y0)
-    return True
+    except subprocess.TimeoutExpired:
+        logger.warning("gwt-mini timed out on %s", image_path)
+        return False
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -867,10 +774,15 @@ async def gemini_generate_image(
                 image.url = re.sub(r"=s\d+(-[a-z0-9]+)*$", "=s0", image.url)
 
             try:
+                # full_size=False only when c8o8Fe already gave us a URL with =s0;
+                # otherwise library's =s2048 is needed for full-size preview download.
+                # Without this gating, an un-upscaled URL with no suffix drops to a
+                # ~382px thumbnail instead of the ~896px preview.
                 filepath = await image.save(
                     path=str(IMAGES_DIR),
                     filename=f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}.png",
                     verbose=False,
+                    full_size=not has_upscale,
                 )
             except Exception as save_err:
                 logger.warning("Image save failed for %d: %s", i, save_err)
