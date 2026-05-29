@@ -40,8 +40,14 @@ DEFAULT_MODEL = "gemini-3.0-flash"
 # same prompt) while the same account generates in ~10s in the browser — the
 # library's stall-watchdog + @running(retry=5) backoff can otherwise stretch a
 # call to minutes. We cap the whole call so it either returns or fails fast with
-# a clear message instead of hanging the MCP client. Override with GEMINI_GEN_TIMEOUT.
-GEN_TIMEOUT = float(os.environ.get("GEMINI_GEN_TIMEOUT", "120"))
+# a clear message instead of hanging the MCP client. This is an upper bound;
+# fast generations still return as soon as Gemini responds.
+#
+# 600s is sized for the worst case: image-edit on a portrait reference with a
+# dense layout (text/logos/details). Such edits routinely stall 3–4× × 45s
+# inside Nano Banana 2 before yielding the result (~210s wall-time observed).
+# Override with GEMINI_GEN_TIMEOUT.
+GEN_TIMEOUT = float(os.environ.get("GEMINI_GEN_TIMEOUT", "600"))
 # Per-network-op timeout for image download in image.save() (seconds). Without
 # this the CDN fetch of the full-size (=s0, ~4.5MB) image can hang forever.
 DOWNLOAD_TIMEOUT = float(os.environ.get("GEMINI_DOWNLOAD_TIMEOUT", "60"))
