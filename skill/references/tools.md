@@ -66,7 +66,7 @@ gemini_generate_image(prompt="make the sky purple", files=["/path/to/image.png"]
 gemini_generate_image(prompt="make it more dramatic", conversation_id=["c_xxx", "r_xxx", "rc_xxx"])
 ```
 
-**Output:** PNG saved to `~/Pictures/gemini/`, 2x upscaled resolution. Watermark auto-removed. Returns `conversation_id` for continuation.
+**Output:** PNG saved to `~/Pictures/gemini/`, 2x upscaled resolution. The Gemini ✦ sparkle is auto-removed (built-in deterministic Reverse Alpha Blending; clean on any background). Removal follows the conversation pipeline — a continuation inherits the root's mode (txt2img → margin 32 vs photo-edit → margin 96), persisted per `conversation_id` in `~/Pictures/gemini/.wm_conv_modes.json`; an unknown cid falls back to shape+colour auto-detection. Returns `conversation_id` for continuation. Set `GEMINI_WM_KEEP=1` to keep the watermark for diagnostics.
 
 **Resolution (2x upscale):**
 - 16:9: 2816x1536 (native 1408x768, auto-upscaled 2x)

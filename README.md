@@ -192,14 +192,22 @@ uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-weba
 
 Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер убирает её встроенным алгоритмом **Reverse Alpha Blending** — `original = (watermarked − premult) / (1 − alpha)` — без внешних бинарников, ML-моделей и скачиваний.
 
-Позиция и прозрачность метки детерминированы — они зависят только от того, был ли в запросе загружен файл-исходник, поэтому метка снимается без всякой детекции:
+Позиция и прозрачность метки — свойство **пайплайна беседы**, а не отдельного кадра:
 
-| Случай | Отступ от угла | Прозрачность |
-|--------|----------------|--------------|
-| Генерация по тексту / continuation | 32 px | ~0.50 |
-| Редактирование загруженного фото | 96 px | ~0.30 |
+| Пайплайн | Отступ от угла | Прозрачность |
+|----------|----------------|--------------|
+| Генерация по тексту (txt2img) | 32 px | ~0.50 |
+| Редактирование загруженного фото (edit) | 96 px | ~0.30 |
 
-Логотип всегда 48 px (×2 при 2x-upscale). Так как сервер сам знает тип запроса, метка снимается чисто на любом фоне, включая тёмный. Откалиброванные alpha-карты лежат в `src/gemini_webapi_mcp/assets/`. Чтобы временно отключить удаление, задайте `GEMINI_WM_KEEP=1`.
+Логотип всегда 48 px (×2 при 2x-upscale). Ключевой момент: **continuation наследует пайплайн корня беседы.** Беседа, начатая с загрузки фото, остаётся edit-пайплайном — все её continuation-кадры несут метку на отступе 96 px, даже если в самом запросе файла нет.
+
+Так как сервер не держит состояние между вызовами (каждый запрос — отдельный процесс), режим беседы персистится в `~/Pictures/gemini/.wm_conv_modes.json` (`conversation_id → mode`, с file-lock и атомарной записью, хранятся последние 500). Логика выбора режима:
+
+- в запросе есть `files` → **edit**;
+- запрос с `conversation_id` → режим берётся из state-файла по `cid`; если cid неизвестен → **авто-детекция** (проверяет оба якоря по форме знака и нейтрально-серому цвету, с self-check-откатом, чтобы не оставить тёмный «призрак»);
+- иначе → **txt**.
+
+Откалиброванные alpha-карты лежат в `src/gemini_webapi_mcp/assets/` (`wm_{alpha,premult}_{edit,txt}.npy`). Чтобы временно отключить удаление, задайте `GEMINI_WM_KEEP=1`.
 
 ## Инструменты
 
@@ -450,14 +458,22 @@ If the 2x version is unavailable (timeout, network error), the server automatica
 
 Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server removes it with a built-in **Reverse Alpha Blending** pass — `original = (watermarked − premult) / (1 − alpha)` — with no external binaries, ML models, or downloads.
 
-The mark's position and opacity are deterministic — they depend only on whether a source file was uploaded in the request, so the mark is removed without any detection:
+The mark's position and opacity are a property of the **conversation pipeline**, not of an individual frame:
 
-| Case | Corner margin | Opacity |
-|------|---------------|---------|
-| Text-to-image / continuation | 32 px | ~0.50 |
-| Editing an uploaded photo | 96 px | ~0.30 |
+| Pipeline | Corner margin | Opacity |
+|----------|---------------|---------|
+| Text-to-image (txt2img) | 32 px | ~0.50 |
+| Editing an uploaded photo (edit) | 96 px | ~0.30 |
 
-The logo is always 48 px (×2 when 2x-upscaled). Since the server knows the request type, the mark is removed cleanly on any background, including dark ones. Calibrated alpha maps live in `src/gemini_webapi_mcp/assets/`. Set `GEMINI_WM_KEEP=1` to disable removal.
+The logo is always 48 px (×2 when 2x-upscaled). The key point: **a continuation inherits the pipeline of the conversation's root.** A conversation started by uploading a photo stays an edit pipeline — all of its continuation frames carry the mark at a 96 px margin, even when the request itself has no file.
+
+Since the server holds no state between calls (each request is a fresh process), the conversation mode is persisted in `~/Pictures/gemini/.wm_conv_modes.json` (`conversation_id → mode`, with a file lock and atomic writes, last 500 kept). Mode selection:
+
+- request has `files` → **edit**;
+- request has a `conversation_id` → mode is read from the state file by `cid`; if the cid is unknown → **auto-detection** (probes both anchors by mark shape and neutral-grey colour, with a self-check revert so it never leaves a dark "ghost");
+- otherwise → **txt**.
+
+Calibrated alpha maps live in `src/gemini_webapi_mcp/assets/` (`wm_{alpha,premult}_{edit,txt}.npy`). Set `GEMINI_WM_KEEP=1` to disable removal.
 
 ## Tools
 
