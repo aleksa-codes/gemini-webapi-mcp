@@ -71,63 +71,93 @@ def _stage(label: str, t0: float) -> float:
     return now
 
 # ---------------------------------------------------------------------------
-# Watermark removal — delegated to Allen Kuo's gwt-mini (GeminiWatermarkTool).
-# Upstream: https://github.com/allenk/GeminiWatermarkTool  (MIT, v0.3.1+)
-# Reverse alpha blend with calibrated 48/96 masks, three-stage NCC detection
-# and automatic legacy-profile fallback for older outputs. Install via
-# `python scripts/install_gwt.py` — binary lives at tools/gwt/gwt-mini.
+# Watermark removal — deterministic reverse alpha-blend.
+#
+# Gemini stamps a 48px "✦" sparkle whose position AND opacity depend solely on
+# whether a source image was uploaded in THIS request (which the server knows):
+#   • no upload (txt2img / regeneration) → 48px logo, 32px margin, alpha≈0.50
+#   • file upload (image edit)           → 48px logo, 96px margin, alpha≈0.30
+# Both share the identical logo shape (alpha-map correlation 0.9999); only the
+# opacity differs (edit ≈ 60% of txt2img — its watermark is downscaled from a 2x
+# canvas). The mark therefore sits at an exactly predictable spot, so we reverse
+# the alpha-blend in place — no detection, no NCC search:
+#     original = (watermarked - premult) / (1 - alpha)
+# The alpha/premult maps in assets/ were calibrated from real outputs and recover
+# the true blend params, so removal is background-independent (clean on charcoal
+# AND on white). This replaces gwt-mini, which only knew the margin-32 anchor and
+# over-subtracted the lower-opacity edit watermark (leaving a dark ✦ ghost).
+# Honours GEMINI_WM_KEEP=1 as a diagnostics kill-switch.
 # ---------------------------------------------------------------------------
-_GWT_BINARY = Path(__file__).resolve().parents[2] / "tools" / "gwt" / (
-    "gwt-mini.exe" if sys.platform == "win32" else "gwt-mini"
-)
-_gwt_missing_warned = False
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+_BASE_LOGO = 48                       # logo size at preview resolution
+_WM_MARGIN = {True: 96, False: 32}    # had_upload -> margin from bottom-right corner
+_wm_maps: dict = {}                   # cache: "edit"/"txt" -> (alpha, premult)
 
 
-def _remove_watermark(image_path: str) -> bool:
-    """Run gwt-mini on image_path, replacing it in place on success.
+def _load_wm_map(had_upload: bool):
+    """Load the calibrated (alpha, premult) maps for the edit/txt watermark."""
+    import numpy as np
+    key = "edit" if had_upload else "txt"
+    if key not in _wm_maps:
+        alpha = np.load(_ASSETS_DIR / f"wm_alpha_{key}.npy").astype(np.float32)
+        premult = np.load(_ASSETS_DIR / f"wm_premult_{key}.npy").astype(np.float32)
+        _wm_maps[key] = (alpha, premult)
+    return _wm_maps[key]
 
-    Returns True on successful removal, False otherwise (binary missing,
-    no watermark detected, subprocess error). Honours GEMINI_WM_KEEP=1
-    as a kill-switch for diagnostics.
+
+def _remove_watermark(image_path: str, had_upload: bool = False,
+                      upscaled: bool = False) -> bool:
+    """Reverse-alpha-blend the Gemini watermark out of image_path in place.
+
+    Position/size are derived deterministically from had_upload (files passed in
+    THIS request) and upscaled (c8o8Fe 2x). Returns True on success, False if
+    skipped (kill-switch, maps missing, image too small). Honours GEMINI_WM_KEEP=1.
     """
-    global _gwt_missing_warned
-    import subprocess
-    import tempfile
-
     if os.environ.get("GEMINI_WM_KEEP") == "1":
         return False
-
-    if not _GWT_BINARY.exists():
-        if not _gwt_missing_warned:
-            logger.warning(
-                "gwt-mini not found at %s — watermark NOT removed. "
-                "Run `python scripts/install_gwt.py` to install.",
-                _GWT_BINARY,
-            )
-            _gwt_missing_warned = True
-        return False
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        tmp_path = tmp.name
     try:
-        result = subprocess.run(
-            [str(_GWT_BINARY), "--no-banner", "-q", "-i", image_path, "-o", tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        out = Path(tmp_path)
-        if result.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            os.replace(tmp_path, image_path)
-            logger.info("Watermark removed via gwt-mini")
-            return True
-        logger.info("gwt-mini found no watermark (rc=%d)", result.returncode)
+        import numpy as np
+        from PIL import Image
+    except Exception as exc:
+        logger.warning("numpy/PIL unavailable — watermark NOT removed: %s", exc)
         return False
-    except subprocess.TimeoutExpired:
-        logger.warning("gwt-mini timed out on %s", image_path)
+    try:
+        alpha, premult = _load_wm_map(had_upload)
+    except Exception as exc:
+        logger.warning("watermark maps missing in %s — NOT removed: %s",
+                       _ASSETS_DIR, exc)
         return False
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+
+    scale = 2 if upscaled else 1
+    logo = _BASE_LOGO * scale
+    margin = _WM_MARGIN[had_upload] * scale
+    if scale != 1:
+        def _rs(m):
+            if m.ndim == 2:
+                return np.asarray(Image.fromarray(m).resize(
+                    (logo, logo), Image.BILINEAR), np.float32)
+            return np.stack([np.asarray(Image.fromarray(m[..., c]).resize(
+                (logo, logo), Image.BILINEAR), np.float32)
+                for c in range(m.shape[2])], -1)
+        alpha, premult = _rs(alpha), _rs(premult)
+
+    try:
+        img = Image.open(image_path).convert("RGB")
+        w, h = img.size
+        if w < logo + margin or h < logo + margin:
+            return False
+        arr = np.asarray(img, np.float32)
+        x0, y0 = w - margin - logo, h - margin - logo
+        box = arr[y0:y0 + logo, x0:x0 + logo]
+        inv = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
+        arr[y0:y0 + logo, x0:x0 + logo] = np.clip((box - premult) / inv, 0, 255)
+        Image.fromarray(arr.astype(np.uint8)).save(image_path)
+        logger.info("Watermark removed (%s, margin %d) from %s",
+                    "edit" if had_upload else "txt2img", margin, image_path)
+        return True
+    except Exception as exc:
+        logger.warning("watermark removal failed on %s: %s", image_path, exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -799,8 +829,8 @@ async def gemini_generate_image(
                 continue
 
             try:
-                if _remove_watermark(filepath):
-                    logger.info("Watermark removed from %s", filepath)
+                _remove_watermark(filepath, had_upload=bool(resolved_files),
+                                  upscaled=has_upscale)
             except Exception as wm_err:
                 logger.warning("Watermark removal failed: %s", wm_err)
             t = _stage(f"watermark removal image {i}", t)
