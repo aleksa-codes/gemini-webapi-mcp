@@ -73,31 +73,43 @@ def _stage(label: str, t0: float) -> float:
 # ---------------------------------------------------------------------------
 # Watermark removal — deterministic reverse alpha-blend.
 #
-# Gemini stamps a 48px "✦" sparkle whose position AND opacity depend solely on
-# whether a source image was uploaded in THIS request (which the server knows):
-#   • no upload (txt2img / regeneration) → 48px logo, 32px margin, alpha≈0.50
-#   • file upload (image edit)           → 48px logo, 96px margin, alpha≈0.30
+# Gemini stamps a 48px "✦" sparkle whose position AND opacity are a property of
+# the generation PIPELINE, not of the current request:
+#   • txt2img pipeline → 48px logo, 32px margin, alpha≈0.50  (mode "txt")
+#   • edit  pipeline   → 48px logo, 96px margin, alpha≈0.30  (mode "edit")
 # Both share the identical logo shape (alpha-map correlation 0.9999); only the
 # opacity differs (edit ≈ 60% of txt2img — its watermark is downscaled from a 2x
-# canvas). The mark therefore sits at an exactly predictable spot, so we reverse
-# the alpha-blend in place — no detection, no NCC search:
+# canvas). Removal reverses the alpha-blend in place — no NCC search:
 #     original = (watermarked - premult) / (1 - alpha)
 # The alpha/premult maps in assets/ were calibrated from real outputs and recover
 # the true blend params, so removal is background-independent (clean on charcoal
-# AND on white). This replaces gwt-mini, which only knew the margin-32 anchor and
-# over-subtracted the lower-opacity edit watermark (leaving a dark ✦ ghost).
+# AND on white).
+#
+# A CONTINUATION (conversation_id, no file this turn) INHERITS the pipeline of
+# the conversation ROOT: a conversation born from a file-upload stays in the edit
+# pipeline → margin 96 for ALL its continuations. The server process is
+# short-lived (one per `mcp-cli call`), so it cannot remember the root from
+# memory — we persist cid→mode in a small JSON (see _record_conv_mode). When the
+# cid is known we pick the position deterministically (works even on a busy
+# corner, since reverse-alpha is content-independent). For a FOREIGN cid (born
+# before this fix / in the browser) we fall back to detection across the two
+# candidate spots, with a self-check that reverts if it would stamp a ghost.
+# This replaces gwt-mini, which only knew the margin-32 anchor and over-subtracted
+# the edit watermark (leaving a dark ✦ ghost).
 # Honours GEMINI_WM_KEEP=1 as a diagnostics kill-switch.
 # ---------------------------------------------------------------------------
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 _BASE_LOGO = 48                       # logo size at preview resolution
-_WM_MARGIN = {True: 96, False: 32}    # had_upload -> margin from bottom-right corner
+_WM_MARGIN = {"edit": 96, "txt": 32}  # mode -> margin from bottom-right corner
 _wm_maps: dict = {}                   # cache: "edit"/"txt" -> (alpha, premult)
+_wm_shape = None                      # cache: normalized ✦ shape (0..1) for detection
+_CONV_MODES_PATH = IMAGES_DIR / ".wm_conv_modes.json"
+_CONV_MODES_LOCK = IMAGES_DIR / ".wm_conv_modes.lock"
 
 
-def _load_wm_map(had_upload: bool):
-    """Load the calibrated (alpha, premult) maps for the edit/txt watermark."""
+def _load_wm_map(key: str):
+    """Load the calibrated (alpha, premult) maps for the "edit"/"txt" watermark."""
     import numpy as np
-    key = "edit" if had_upload else "txt"
     if key not in _wm_maps:
         alpha = np.load(_ASSETS_DIR / f"wm_alpha_{key}.npy").astype(np.float32)
         premult = np.load(_ASSETS_DIR / f"wm_premult_{key}.npy").astype(np.float32)
@@ -105,59 +117,205 @@ def _load_wm_map(had_upload: bool):
     return _wm_maps[key]
 
 
-def _remove_watermark(image_path: str, had_upload: bool = False,
-                      upscaled: bool = False) -> bool:
-    """Reverse-alpha-blend the Gemini watermark out of image_path in place.
+def _load_wm_shape():
+    """Normalized ✦ shape (0..1), shared by both modes — used for detection."""
+    global _wm_shape
+    if _wm_shape is None:
+        alpha, _ = _load_wm_map("edit")
+        _wm_shape = alpha / float(alpha.max())
+    return _wm_shape
 
-    Position/size are derived deterministically from had_upload (files passed in
-    THIS request) and upscaled (c8o8Fe 2x). Returns True on success, False if
-    skipped (kill-switch, maps missing, image too small). Honours GEMINI_WM_KEEP=1.
+
+def _resize_map(m, logo):
+    """Bilinear-resize a 48px alpha/premult map to `logo` px (for 2x upscale)."""
+    import numpy as np
+    from PIL import Image
+    if m.shape[0] == logo:
+        return m
+    if m.ndim == 2:
+        return np.asarray(Image.fromarray(m).resize((logo, logo), Image.BILINEAR),
+                          np.float32)
+    return np.stack([np.asarray(Image.fromarray(m[..., c]).resize(
+        (logo, logo), Image.BILINEAR), np.float32) for c in range(m.shape[2])], -1)
+
+
+def _plane_bg(g, shape):
+    """Least-squares background plane fit over pixels outside the ✦ (shape≈0)."""
+    import numpy as np
+    m = shape < 0.06
+    ys, xs = np.mgrid[0:g.shape[0], 0:g.shape[1]]
+    A = np.c_[xs[m], ys[m], np.ones(int(m.sum()))]
+    coef, *_ = np.linalg.lstsq(A, g[m], rcond=None)
+    return coef[0] * xs + coef[1] * ys + coef[2]
+
+
+def _star_corr(box, shape):
+    """Correlation of background-subtracted luminance with the ✦ shape.
+
+    ~+1 = bright sparkle present, ~0 = clean background, strongly negative = a
+    dark ghost (e.g. over-subtraction). Background-robust via a plane fit.
+    """
+    import numpy as np
+    g = box.mean(2)
+    d = g - _plane_bg(g, shape)
+    core = shape > 0.15
+    dv = d[core] - d[core].mean()
+    sv = shape[core] - shape[core].mean()
+    denom = float(np.sqrt((dv ** 2).sum() * (sv ** 2).sum()))
+    return float((dv * sv).sum() / denom) if denom > 1e-9 else 0.0
+
+
+def _is_neutral(box, shape):
+    """True if the ✦ core is neutral grey (Gemini's mark) vs coloured content."""
+    core = shape > 0.3
+    spread = (box.max(2) - box.min(2))[core]
+    return float(spread.mean()) < 28.0
+
+
+def _reverse_at(arr, x0, y0, logo, alpha, premult):
+    """Reverse the alpha-blend in arr[y0:y0+logo, x0:x0+logo] in place."""
+    import numpy as np
+    box = arr[y0:y0 + logo, x0:x0 + logo]
+    inv = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
+    arr[y0:y0 + logo, x0:x0 + logo] = np.clip((box - premult) / inv, 0, 255)
+
+
+def _detect_mode(arr, w, h):
+    """Detect which spot holds the ✦ for a foreign conversation (mode 'auto').
+
+    Returns "edit" / "txt" if a sparkle is confidently found, else None. Probes
+    only the two known anchors (margin 96 vs 32) at preview scale — not a free
+    NCC search — and requires a neutral-grey shape match above threshold.
+    """
+    shape = _load_wm_shape()
+    logo = _BASE_LOGO
+    best = None
+    for mode in ("edit", "txt"):
+        margin = _WM_MARGIN[mode]
+        if w < logo + margin or h < logo + margin:
+            continue
+        x0, y0 = w - margin - logo, h - margin - logo
+        box = arr[y0:y0 + logo, x0:x0 + logo]
+        corr = _star_corr(box, shape)
+        if corr > 0.5 and _is_neutral(box, shape):
+            if best is None or corr > best[1]:
+                best = (mode, corr)
+    return best[0] if best else None
+
+
+def _get_conv_mode(cid: Optional[str]) -> Optional[str]:
+    """Look up the persisted pipeline mode ("edit"/"txt") for a conversation."""
+    if not cid or not _CONV_MODES_PATH.exists():
+        return None
+    try:
+        entry = json.loads(_CONV_MODES_PATH.read_text()).get(cid)
+        return entry.get("mode") if entry else None
+    except Exception:
+        return None
+
+
+def _record_conv_mode(cid: Optional[str], mode: Optional[str]) -> None:
+    """Persist cid→mode (concurrency-safe: flock + atomic replace, keep last 500)."""
+    if not cid or mode not in ("edit", "txt"):
+        return
+    import fcntl
+    import time
+    try:
+        IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_CONV_MODES_LOCK, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            data = {}
+            if _CONV_MODES_PATH.exists():
+                try:
+                    data = json.loads(_CONV_MODES_PATH.read_text())
+                except Exception:
+                    data = {}
+            data[cid] = {"mode": mode, "ts": time.time()}
+            if len(data) > 500:
+                data = dict(sorted(data.items(),
+                                   key=lambda kv: kv[1].get("ts", 0),
+                                   reverse=True)[:500])
+            tmp = _CONV_MODES_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, _CONV_MODES_PATH)
+    except Exception as exc:
+        logger.warning("conv-mode record failed for %s: %s", cid, exc)
+
+
+def _remove_watermark(image_path: str, mode: str = "txt",
+                      upscaled: bool = False) -> Optional[str]:
+    """Reverse-alpha-blend the Gemini ✦ out of image_path in place.
+
+    mode: "edit" (margin 96) / "txt" (margin 32) → deterministic; "auto" →
+    detect across both anchors (foreign cid) with a ghost self-check. upscaled
+    scales the 48px maps for c8o8Fe 2x output. Returns the mode actually applied
+    ("edit"/"txt") for caller self-learning, or None if skipped/not found.
+    Honours GEMINI_WM_KEEP=1.
     """
     if os.environ.get("GEMINI_WM_KEEP") == "1":
-        return False
+        return None
     try:
         import numpy as np
         from PIL import Image
     except Exception as exc:
         logger.warning("numpy/PIL unavailable — watermark NOT removed: %s", exc)
-        return False
-    try:
-        alpha, premult = _load_wm_map(had_upload)
-    except Exception as exc:
-        logger.warning("watermark maps missing in %s — NOT removed: %s",
-                       _ASSETS_DIR, exc)
-        return False
-
-    scale = 2 if upscaled else 1
-    logo = _BASE_LOGO * scale
-    margin = _WM_MARGIN[had_upload] * scale
-    if scale != 1:
-        def _rs(m):
-            if m.ndim == 2:
-                return np.asarray(Image.fromarray(m).resize(
-                    (logo, logo), Image.BILINEAR), np.float32)
-            return np.stack([np.asarray(Image.fromarray(m[..., c]).resize(
-                (logo, logo), Image.BILINEAR), np.float32)
-                for c in range(m.shape[2])], -1)
-        alpha, premult = _rs(alpha), _rs(premult)
-
+        return None
     try:
         img = Image.open(image_path).convert("RGB")
         w, h = img.size
-        if w < logo + margin or h < logo + margin:
-            return False
         arr = np.asarray(img, np.float32)
-        x0, y0 = w - margin - logo, h - margin - logo
-        box = arr[y0:y0 + logo, x0:x0 + logo]
-        inv = np.clip(1.0 - alpha, 1e-3, 1.0)[..., None]
-        arr[y0:y0 + logo, x0:x0 + logo] = np.clip((box - premult) / inv, 0, 255)
+    except Exception as exc:
+        logger.warning("watermark removal failed to open %s: %s", image_path, exc)
+        return None
+
+    # Resolve the mode → for "auto", detect from the image (foreign cid path).
+    if mode == "auto":
+        try:
+            mode = _detect_mode(arr, w, h)
+        except Exception as exc:
+            logger.warning("watermark auto-detect failed on %s: %s", image_path, exc)
+            mode = None
+        if mode is None:
+            logger.info("Watermark not detected (foreign cid) — left as-is: %s",
+                        image_path)
+            return None
+        detected = True
+    else:
+        detected = False
+
+    try:
+        alpha, premult = _load_wm_map(mode)
+    except Exception as exc:
+        logger.warning("watermark maps missing in %s — NOT removed: %s",
+                       _ASSETS_DIR, exc)
+        return None
+
+    scale = 2 if upscaled else 1
+    logo = _BASE_LOGO * scale
+    margin = _WM_MARGIN[mode] * scale
+    if w < logo + margin or h < logo + margin:
+        return None
+    if scale != 1:
+        alpha, premult = _resize_map(alpha, logo), _resize_map(premult, logo)
+
+    x0, y0 = w - margin - logo, h - margin - logo
+    try:
+        _reverse_at(arr, x0, y0, logo, alpha, premult)
+        # Detection path: guard against stamping a ghost on a clean corner —
+        # if the removal made the spot worse (strong inverse shape), revert.
+        if detected and scale == 1:
+            shape = _load_wm_shape()
+            if _star_corr(arr[y0:y0 + logo, x0:x0 + logo], shape) < -0.3:
+                logger.info("Watermark auto-removal reverted (would ghost): %s",
+                            image_path)
+                return None
         Image.fromarray(arr.astype(np.uint8)).save(image_path)
-        logger.info("Watermark removed (%s, margin %d) from %s",
-                    "edit" if had_upload else "txt2img", margin, image_path)
-        return True
+        logger.info("Watermark removed (%s, margin %d%s) from %s", mode, margin,
+                    ", detected" if detected else "", image_path)
+        return mode
     except Exception as exc:
         logger.warning("watermark removal failed on %s: %s", image_path, exc)
-        return False
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -788,6 +946,20 @@ async def gemini_generate_image(
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         saved = []
 
+        # Resolve the watermark pipeline mode for this request:
+        #   • a file uploaded this turn → edit pipeline (margin 96)
+        #   • continuation (no file)    → inherit the conversation's recorded mode;
+        #                                 foreign cid → "auto" (detect both anchors)
+        #   • plain txt2img             → txt pipeline (margin 32)
+        input_cid = conversation_id[0] if conversation_id else None
+        if resolved_files:
+            wm_mode = "edit"
+        elif input_cid:
+            wm_mode = _get_conv_mode(input_cid) or "auto"
+        else:
+            wm_mode = "txt"
+        applied_mode = wm_mode if wm_mode in ("edit", "txt") else None
+
         for i, image in enumerate(response.images):
             # Ensure a download timeout even if this image came from the
             # original (non-patched) parser, where session_kwargs is empty.
@@ -829,8 +1001,9 @@ async def gemini_generate_image(
                 continue
 
             try:
-                _remove_watermark(filepath, had_upload=bool(resolved_files),
-                                  upscaled=has_upscale)
+                rm = _remove_watermark(filepath, mode=wm_mode, upscaled=has_upscale)
+                if rm in ("edit", "txt"):
+                    applied_mode = rm   # self-learn the mode found by detection
             except Exception as wm_err:
                 logger.warning("Watermark removal failed: %s", wm_err)
             t = _stage(f"watermark removal image {i}", t)
@@ -842,6 +1015,10 @@ async def gemini_generate_image(
             conv_id = [chat.cid or "", chat.rid or "", chat.rcid or ""]
         else:
             conv_id = metadata[:3] if metadata and metadata[0] else None
+        # Persist the conversation's pipeline mode so its continuations (which carry
+        # no file and run in a fresh process) can pick the watermark spot exactly.
+        if conv_id and conv_id[0] and applied_mode:
+            _record_conv_mode(conv_id[0], applied_mode)
         result = {
             "text": response.text or "",
             "images_saved_to": str(IMAGES_DIR),
