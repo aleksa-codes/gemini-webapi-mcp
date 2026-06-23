@@ -190,24 +190,17 @@ uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-weba
 
 ## Удаление вотермарки
 
-Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер убирает её встроенным алгоритмом **Reverse Alpha Blending** — `original = (watermarked − premult) / (1 − alpha)` — без внешних бинарников, ML-моделей и скачиваний.
+Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер убирает её встроенным reverse-alpha-вычитанием — `original = (L − A·shape·255) / (1 − A·shape)` — без внешних бинарников, ML-моделей и скачиваний.
 
-Позиция и прозрачность метки — свойство **пайплайна беседы**, а не отдельного кадра:
+Метка всегда стоит в одном из двух фиксированных угловых якорей — на отступе **96 px** или **32 px** от правого нижнего угла (абсолютные отступы, не зависят от разрешения; логотип 48 px, ×2 при 2x-upscale). Сервер не детектирует метку по порогу корреляции — это ненадёжно на ярком фоне, где слабая полупрозрачная звёздочка почти не контрастирует. Вместо этого он детерминированно обрабатывает **оба якоря**:
 
-| Пайплайн | Отступ от угла | Прозрачность |
-|----------|----------------|--------------|
-| Генерация по тексту (txt2img) | 32 px | ~0.50 |
-| Редактирование загруженного фото (edit) | 96 px | ~0.30 |
+1. **per-image прозрачность** — сила метки оценивается из самого кадра (`L = bg + A·shape·(255−bg)`, least-squares); на пустом якоре `A ≈ 0`, поэтому вычитание становится no-op;
+2. **reverse-alpha** в позиции якоря;
+3. **self-check по |corr|** — вычитание принимается, только если оно *уменьшает* корреляцию с формой звезды; иначе откатывается. Навредить пустому, текстурному или цветному-контентному якорю невозможно.
 
-Логотип всегда 48 px (×2 при 2x-upscale). Ключевой момент: **continuation наследует пайплайн корня беседы.** Беседа, начатая с загрузки фото, остаётся edit-пайплайном — все её continuation-кадры несут метку на отступе 96 px, даже если в самом запросе файла нет.
+Подход не содержит ни одной захардкоженной «под разрешение» величины, поэтому работает на любом нативном разрешении и соотношении сторон — на светлом, тёмном и цветном фоне.
 
-Так как сервер не держит состояние между вызовами (каждый запрос — отдельный процесс), режим беседы персистится в `~/Pictures/gemini/.wm_conv_modes.json` (`conversation_id → mode`, с file-lock и атомарной записью, хранятся последние 500). Логика выбора режима:
-
-- в запросе есть `files` → **edit**;
-- запрос с `conversation_id` → режим берётся из state-файла по `cid`; если cid неизвестен → **авто-детекция** (проверяет оба якоря по форме знака и нейтрально-серому цвету, с self-check-откатом, чтобы не оставить тёмный «призрак»);
-- иначе → **txt**.
-
-Откалиброванные alpha-карты лежат в `src/gemini_webapi_mcp/assets/` (`wm_{alpha,premult}_{edit,txt}.npy`). Чтобы временно отключить удаление, задайте `GEMINI_WM_KEEP=1`.
+Единственный калиброванный инвариант — форма звезды в `src/gemini_webapi_mcp/assets/wm_alpha_edit.npy`. Чтобы временно отключить удаление (получить «сырой» водяной знак), задайте `GEMINI_WM_KEEP=1`.
 
 ## Инструменты
 
@@ -456,24 +449,17 @@ If the 2x version is unavailable (timeout, network error), the server automatica
 
 ## Watermark Removal
 
-Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server removes it with a built-in **Reverse Alpha Blending** pass — `original = (watermarked − premult) / (1 − alpha)` — with no external binaries, ML models, or downloads.
+Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server removes it with a built-in reverse alpha-blend — `original = (L − A·shape·255) / (1 − A·shape)` — with no external binaries, ML models, or downloads.
 
-The mark's position and opacity are a property of the **conversation pipeline**, not of an individual frame:
+The mark is always stamped at one of two fixed corner anchors — **96 px** or **32 px** from the bottom-right (absolute offsets that don't depend on resolution; the logo is 48 px, ×2 when 2x-upscaled). The server does **not** detect the mark by a correlation threshold — that's unreliable on bright backgrounds, where a faint translucent star barely contrasts. Instead it deterministically processes **both anchors**:
 
-| Pipeline | Corner margin | Opacity |
-|----------|---------------|---------|
-| Text-to-image (txt2img) | 32 px | ~0.50 |
-| Editing an uploaded photo (edit) | 96 px | ~0.30 |
+1. **per-image opacity** — the mark's strength is fit from the frame itself (`L = bg + A·shape·(255−bg)`, least-squares); on an empty anchor `A ≈ 0`, so the subtraction is a no-op;
+2. **reverse alpha-blend** at the anchor;
+3. **|corr| self-check** — a subtraction is accepted only if it *reduces* the correlation with the star shape; otherwise it is reverted. It can never damage an empty, textured, or coloured-content anchor.
 
-The logo is always 48 px (×2 when 2x-upscaled). The key point: **a continuation inherits the pipeline of the conversation's root.** A conversation started by uploading a photo stays an edit pipeline — all of its continuation frames carry the mark at a 96 px margin, even when the request itself has no file.
+The approach hard-codes no resolution-dependent values, so it works at any native resolution or aspect ratio — on light, dark, and coloured backgrounds alike.
 
-Since the server holds no state between calls (each request is a fresh process), the conversation mode is persisted in `~/Pictures/gemini/.wm_conv_modes.json` (`conversation_id → mode`, with a file lock and atomic writes, last 500 kept). Mode selection:
-
-- request has `files` → **edit**;
-- request has a `conversation_id` → mode is read from the state file by `cid`; if the cid is unknown → **auto-detection** (probes both anchors by mark shape and neutral-grey colour, with a self-check revert so it never leaves a dark "ghost");
-- otherwise → **txt**.
-
-Calibrated alpha maps live in `src/gemini_webapi_mcp/assets/` (`wm_{alpha,premult}_{edit,txt}.npy`). Set `GEMINI_WM_KEEP=1` to disable removal.
+The only calibrated invariant is the star shape in `src/gemini_webapi_mcp/assets/wm_alpha_edit.npy`. Set `GEMINI_WM_KEEP=1` to disable removal (keep the raw watermark).
 
 ## Tools
 
