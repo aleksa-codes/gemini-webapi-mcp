@@ -10,9 +10,15 @@ Text prompt to Gemini. Supports multi-turn and thinking mode.
 | `prompt` | yes | — | Text prompt |
 | `model` | no | `gemini-3.0-flash` | Model to use |
 | `session_id` | no | — | Session ID for multi-turn |
+| `temporary` | no | `False` | Don't save conversation to Gemini history |
 
 ```
 gemini_chat(prompt="Explain quantum computing")
+```
+
+Temporary chat (not saved to history):
+```
+gemini_chat(prompt="Quick question about cats", temporary=True)
 ```
 
 Multi-turn:
@@ -50,6 +56,7 @@ Generate new images or edit existing ones. Watermark auto-removed.
 | `files` | no | — | List of file paths for image editing |
 | `model` | no | `gemini-3.0-flash-thinking` | Image model (Nano Banana 2, supports aspect ratios) |
 | `conversation_id` | no | — | `[cid, rid, rcid]` from previous call for iterative refinement |
+| `temporary` | no | `False` | Don't save generation to Gemini history |
 
 **Generate:**
 ```
@@ -86,6 +93,7 @@ Upload file and ask Gemini about it. Supports video, images, PDF, documents.
 | `file_path` | yes | — | Absolute path to file |
 | `prompt` | no | `"Describe this file."` | Question or instruction |
 | `model` | no | `gemini-3.0-flash` | Model to use |
+| `temporary` | no | `False` | Don't save conversation to Gemini history |
 
 ```
 gemini_upload_file(file_path="/path/to/image.png", prompt="What is in this image?")
@@ -103,6 +111,7 @@ Analyze URL — YouTube videos, webpages, articles.
 | `url` | yes | — | URL to analyze |
 | `prompt` | no | `"Summarize this content."` | Question about the content |
 | `model` | no | `gemini-3.0-flash` | Model to use |
+| `temporary` | no | `False` | Don't save conversation to Gemini history |
 
 ```
 gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this video")
@@ -131,9 +140,10 @@ gemini_reset()
 | Problem | Solution |
 |---------|----------|
 | Auth error / cookies expired | `gemini_reset` |
+| Image generation blocked / fails | Call `gemini_reset` first — often fixes transient Google blocks |
 | Stream interrupted / timeout | Server auto-retries (watchdog 45s); file editing may need 2-3 retries |
 | No images in response | Prompt may violate content policy, rephrase. For file editing: update server (`git pull && uv sync`) |
-| Square image despite aspect ratio | Include "16:9" or "9:16" in prompt text |
+| Square image despite aspect ratio | Include aspect ratio in prompt text (e.g. "16:9", "9:16", "1:1", "4:3", "3:4") |
 | Error 1052 / image generation fails | Google rotated model IDs. Update server to latest version: `git pull && uv sync` |
 
 ## Environment Variables

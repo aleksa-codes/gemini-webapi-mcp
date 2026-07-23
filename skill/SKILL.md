@@ -45,7 +45,9 @@ gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this
 
 - Images saved to `~/Pictures/gemini/` as PNG, 2x upscaled resolution
 - Watermark auto-removed (built-in, no extra dependencies)
-- Include "16:9" or "9:16" in prompt for non-square aspect ratios
+- Always include aspect ratio at the end of the prompt (e.g. "16:9", "9:16", "1:1", "4:3", "3:4")
+- Use `temporary=True` to skip saving to Gemini history
 - Do NOT specify model for image generation — server picks the best one automatically
+- If image generation fails or gets blocked, call `gemini_reset` first — it re-initializes the client and often fixes transient Google blocks
 - Auth errors: call `gemini_reset` to refresh cookies
 - Models and full parameter reference: see [tools.md](references/tools.md)
