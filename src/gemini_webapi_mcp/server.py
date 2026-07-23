@@ -336,6 +336,7 @@ def _get_sessions(ctx: Context) -> dict:
 
 
 _image_mode = False
+_temporary_mode = False
 _image_lock = asyncio.Lock()
 
 # Populated by _patched_parse hook during StreamGenerate response parsing.
@@ -384,7 +385,28 @@ def _patch_client(gemini_client):
     _orig_request = http.request
 
     async def patched_request(method, url, **kwargs):
-        global _image_mode
+        global _image_mode, _temporary_mode
+
+        # --- Temporary chat: inject flag into any StreamGenerate request ---
+        if _temporary_mode and method == "POST" and "StreamGenerate" in str(url):
+            data = kwargs.get("data")
+            if isinstance(data, dict) and "f.req" in data:
+                try:
+                    outer = json.loads(data["f.req"])
+                    inner = json.loads(outer[1])
+                    if len(inner) > 45:
+                        inner[45] = 1
+                    else:
+                        inner.extend([None] * (46 - len(inner)))
+                        inner[45] = 1
+                    outer[1] = json.dumps(inner)
+                    data["f.req"] = json.dumps(outer)
+                    kwargs["data"] = data
+                except Exception as _e:
+                    if _DEBUG_TIMING:
+                        logger.warning("[req] temp patch failed: %s", _e)
+
+        # --- Image generation: browser-compatible params ---
         if method == "POST" and "StreamGenerate" in str(url) and _image_mode:
             headers = kwargs.get("headers") or {}
 
@@ -722,6 +744,7 @@ async def gemini_chat(
     ctx: Context,
     model: Optional[str] = None,
     session_id: Optional[str] = None,
+    temporary: bool = False,
 ) -> str:
     """Send a text prompt to Google Gemini and get a response.
 
@@ -731,11 +754,14 @@ async def gemini_chat(
                'gemini-3.0-flash-thinking'). Defaults to gemini-3.0-flash.
         session_id: Optional session ID from gemini_start_chat for
                     multi-turn conversation with context.
+        temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:
         Gemini's text response. When using flash-thinking model,
         also includes the model's reasoning process.
     """
+    global _temporary_mode
+    _temporary_mode = temporary
     try:
         client = _get_client(ctx)
 
@@ -757,6 +783,8 @@ async def gemini_chat(
         return text
     except Exception as e:
         return _handle_error(e)
+    finally:
+        _temporary_mode = False
 
 
 @mcp.tool(
@@ -775,6 +803,7 @@ async def gemini_generate_image(
     model: Optional[str] = None,
     files: Optional[list[str]] = None,
     conversation_id: Optional[list[str]] = None,
+    temporary: bool = False,
 ) -> str:
     """Generate or edit images with Gemini.
 
@@ -796,13 +825,15 @@ async def gemini_generate_image(
         conversation_id: Optional list of [cid, rid, rcid] from a previous
                          gemini_generate_image response to continue the conversation.
                          Passing just [cid] (from browser URL) also works.
+        temporary: If True, the generation won't be saved to Gemini history.
 
     Returns:
         JSON with generated image paths, conversation_id for continuation, or an error message.
     """
-    global _image_mode
+    global _image_mode, _temporary_mode
     import time
     t0 = time.monotonic()
+    _temporary_mode = temporary
     try:
         client = _get_client(ctx)
 
@@ -935,6 +966,8 @@ async def gemini_generate_image(
 
     except Exception as e:
         return _handle_error(e)
+    finally:
+        _temporary_mode = False
 
 
 @mcp.tool(
@@ -952,6 +985,7 @@ async def gemini_upload_file(
     ctx: Context,
     prompt: str = "Describe this file.",
     model: Optional[str] = None,
+    temporary: bool = False,
 ) -> str:
     """Upload a file (image, PDF, document, video) to Gemini and ask a question about it.
 
@@ -960,10 +994,13 @@ async def gemini_upload_file(
         prompt: Question or instruction about the file
                 (e.g. 'What is shown in this image?').
         model: Model name. Defaults to gemini-3.0-flash.
+        temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:
         Gemini's text response about the uploaded file.
     """
+    global _temporary_mode
+    _temporary_mode = temporary
     try:
         p = Path(file_path).expanduser().resolve()
         if not p.exists():
@@ -977,6 +1014,8 @@ async def gemini_upload_file(
 
     except Exception as e:
         return _handle_error(e)
+    finally:
+        _temporary_mode = False
 
 
 @mcp.tool(
@@ -994,6 +1033,7 @@ async def gemini_analyze_url(
     ctx: Context,
     prompt: str = "Summarize this content.",
     model: Optional[str] = None,
+    temporary: bool = False,
 ) -> str:
     """Analyze a URL — YouTube videos, webpages, articles, etc.
 
@@ -1005,10 +1045,13 @@ async def gemini_analyze_url(
         prompt: Question or instruction about the content
                 (e.g. 'Summarize this video', 'What are the key points?').
         model: Model name. Defaults to gemini-3.0-flash.
+        temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:
         Gemini's analysis of the URL content.
     """
+    global _temporary_mode
+    _temporary_mode = temporary
     try:
         client = _get_client(ctx)
         full_prompt = f"{prompt}\n\n{url}"
@@ -1018,6 +1061,8 @@ async def gemini_analyze_url(
         return response.text or "(empty response)"
     except Exception as e:
         return _handle_error(e)
+    finally:
+        _temporary_mode = False
 
 
 @mcp.tool(
