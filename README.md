@@ -217,9 +217,9 @@ Gemini добавляет sparkle-метку (четырёхконечную з�
 
 | Модель | По умолчанию для | Примечание |
 |--------|------------------|------------|
-| `gemini-3.0-flash` | чат, анализ файлов | Быстрая |
-| `gemini-3.0-flash-thinking` | генерация изображений | Nano Banana 2, поддержка пропорций |
-| `gemini-3.0-pro` | — | Альтернативная модель |
+| `gemini-3.6-flash` | чат, анализ файлов | Быстрая |
+| `gemini-3.5-flash-lite` | — | Лёгкая и самая быстрая |
+| `gemini-3.1-pro` | — | Сложные рассуждения |
 
 ## Примеры использования
 
@@ -477,9 +477,9 @@ The only calibrated invariant is the star shape in `src/gemini_webapi_mcp/assets
 
 | Model | Default for | Notes |
 |-------|-------------|-------|
-| `gemini-3.0-flash` | chat, file analysis | Fast |
-| `gemini-3.0-flash-thinking` | image generation | Nano Banana 2, supports aspect ratios |
-| `gemini-3.0-pro` | — | Alternative model |
+| `gemini-3.6-flash` | chat, file analysis | Fast |
+| `gemini-3.5-flash-lite` | — | Lightweight, fastest |
+| `gemini-3.1-pro` | — | Complex reasoning |
 
 ## Usage Examples
 

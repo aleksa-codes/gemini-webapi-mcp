@@ -33,7 +33,26 @@ logger.setLevel(logging.INFO)
 # Constants
 # ---------------------------------------------------------------------------
 IMAGES_DIR = Path.home() / "Pictures" / "gemini"
-DEFAULT_MODEL = "gemini-3.0-flash"
+DEFAULT_MODEL = "gemini-3.6-flash"
+
+# Models not yet in gemini_webapi.constants.Model. Keyed by model name; the value
+# is the full "x-goog-ext-525001261-jspb" request header captured from a real
+# StreamGenerate request. The trailing uppercase UUID is a per-request nonce —
+# Google ignores its value, so a static copy works.
+_EXTRA_MODELS = {
+    "gemini-3.5-flash-lite": (
+        '[1,null,null,null,"cf41b0e0dd7d53e5",null,null,0,[4,5,6,8],'
+        'null,null,1,null,null,6,1,"FB9551F9-257B-4901-BB87-00DF412FE5CC"]'
+    ),
+    "gemini-3.6-flash": (
+        '[1,null,null,null,"fbb127bbb056c959",null,null,0,[4,5,6,8],'
+        'null,null,1,null,null,1,1,"FB9551F9-257B-4901-BB87-00DF412FE5CC"]'
+    ),
+    "gemini-3.1-pro": (
+        '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4,5,6,8],'
+        'null,null,1,null,null,3,1,"EA125BD5-EEA0-437E-9464-82D9B1FBEA98"]'
+    ),
+}
 
 # Hard ceiling for a single image-generation call (seconds). The StreamGenerate
 # response via gemini_webapi is erratically slow (measured 22s..345s for the
@@ -344,6 +363,31 @@ _image_tokens: dict[str, str] = {}   # preview_url -> download_token
 _last_metadata: list = []             # [cid, rid, rcid, ...] from last response
 
 
+def _register_custom_models():
+    """Teach gemini_webapi about models missing from its Model enum.
+
+    Strings passed to start_chat/generate_content resolve via
+    Model.from_name(), which raises on unknown names. We wrap it so custom
+    models resolve to their captured request header instead.
+    """
+    from gemini_webapi.constants import Model
+
+    orig_from_name = Model.from_name
+
+    def patched_from_name(name):
+        header = _EXTRA_MODELS.get(name)
+        if header:
+            custom = Model.UNSPECIFIED
+            custom.model_name = name
+            custom.model_header = {"x-goog-ext-525001261-jspb": header}
+            return custom
+        if name.startswith("gemini-3.0"):
+            raise ValueError(f"Model '{name}' is retired. Use: {', '.join(sorted(_EXTRA_MODELS))}")
+        return orig_from_name(name)
+
+    Model.from_name = patched_from_name
+
+
 def _patch_client(gemini_client):
     """Patch GeminiClient for image generation and 2x download support.
 
@@ -351,6 +395,8 @@ def _patch_client(gemini_client):
     2. Add browser-compatible body params and extra headers during image generation.
     3. Intercept response parsing to capture image download tokens for c8o8Fe RPC.
     """
+    _register_custom_models()
+
     # Model id used by the browser for fast image generation (Flash, captured
     # 2026-05-21 from a real StreamGenerate request on a logged-in session).
     # The previous map forced "e051ce1aa80aa576" = flash-THINKING-advanced, the
@@ -710,7 +756,7 @@ async def gemini_start_chat(
     have full context. Pass the returned session_id to gemini_chat.
 
     Args:
-        model: Model name for this session. Defaults to gemini-3.0-flash.
+        model: Model name for this session. Defaults to gemini-3.6-flash.
 
     Returns:
         JSON with session_id to use in subsequent gemini_chat calls.
@@ -750,14 +796,14 @@ async def gemini_chat(
 
     Args:
         prompt: The text prompt to send to Gemini.
-        model: Model name (e.g. 'gemini-3.0-flash', 'gemini-3.0-pro',
-               'gemini-3.0-flash-thinking'). Defaults to gemini-3.0-flash.
+        model: Model name (e.g. 'gemini-3.6-flash', 'gemini-3.1-pro',
+               'gemini-3.5-flash-lite'). Defaults to gemini-3.6-flash.
         session_id: Optional session ID from gemini_start_chat for
                     multi-turn conversation with context.
         temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:
-        Gemini's text response. When using flash-thinking model,
+        Gemini's text response. When using a thinking-capable model,
         also includes the model's reasoning process.
     """
     global _temporary_mode
@@ -819,8 +865,8 @@ async def gemini_generate_image(
     Args:
         prompt: Description of the image to generate, or editing instruction
                 (e.g. 'change the background to blue', 'make it a cartoon').
-        model: Model name. Defaults to gemini-3.0-flash-thinking
-               (Nano Banana 2, supports non-square aspect ratios).
+        model: Model name. Defaults to gemini-3.6-flash
+               (image generation uses its own model ID, not this one).
         files: Optional list of file paths to images to edit/transform.
         conversation_id: Optional list of [cid, rid, rcid] from a previous
                          gemini_generate_image response to continue the conversation.
@@ -854,11 +900,11 @@ async def gemini_generate_image(
                 if conversation_id:
                     chat = client.start_chat(
                         metadata=conversation_id,
-                        model=model or "gemini-3.0-flash-thinking",
+                        model=model or DEFAULT_MODEL,
                     )
                     gen_coro = chat.send_message(prompt, files=resolved_files or None)
                 else:
-                    kwargs = {"model": model or "gemini-3.0-flash-thinking"}
+                    kwargs = {"model": model or DEFAULT_MODEL}
                     if resolved_files:
                         kwargs["files"] = resolved_files
                     gen_coro = client.generate_content(prompt, **kwargs)
@@ -993,7 +1039,7 @@ async def gemini_upload_file(
         file_path: Absolute path to the file to upload.
         prompt: Question or instruction about the file
                 (e.g. 'What is shown in this image?').
-        model: Model name. Defaults to gemini-3.0-flash.
+        model: Model name. Defaults to gemini-3.6-flash.
         temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:
@@ -1044,7 +1090,7 @@ async def gemini_analyze_url(
         url: The URL to analyze (YouTube, article, webpage, etc.).
         prompt: Question or instruction about the content
                 (e.g. 'Summarize this video', 'What are the key points?').
-        model: Model name. Defaults to gemini-3.0-flash.
+        model: Model name. Defaults to gemini-3.6-flash.
         temporary: If True, the conversation won't be saved to Gemini history.
 
     Returns:

@@ -8,7 +8,7 @@ Text prompt to Gemini. Supports multi-turn and thinking mode.
 | Param | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `prompt` | yes | — | Text prompt |
-| `model` | no | `gemini-3.0-flash` | Model to use |
+| `model` | no | `gemini-3.6-flash` | Model to use |
 | `session_id` | no | — | Session ID for multi-turn |
 | `temporary` | no | `False` | Don't save conversation to Gemini history |
 
@@ -28,7 +28,7 @@ gemini_chat(prompt="Now simpler", session_id="abc123")
 
 Thinking mode (shows reasoning):
 ```
-gemini_chat(prompt="Solve step by step: ...", model="gemini-3.0-flash-thinking")
+gemini_chat(prompt="Solve step by step: ...", model="gemini-3.1-pro")
 ```
 
 ## gemini_start_chat
@@ -38,11 +38,11 @@ Start multi-turn session. Returns `session_id` for use in `gemini_chat`.
 **Parameters:**
 | Param | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `model` | no | `gemini-3.0-flash` | Model for session |
+| `model` | no | `gemini-3.6-flash` | Model for session |
 
 ```
 gemini_start_chat()
-gemini_start_chat(model="gemini-3.0-pro")
+gemini_start_chat(model="gemini-3.1-pro")
 ```
 
 ## gemini_generate_image
@@ -54,7 +54,7 @@ Generate new images or edit existing ones. Watermark auto-removed.
 |-------|----------|---------|-------------|
 | `prompt` | yes | — | Image description or editing instruction |
 | `files` | no | — | List of file paths for image editing |
-| `model` | no | `gemini-3.0-flash-thinking` | Image model (Nano Banana 2, supports aspect ratios) |
+| `model` | no | `gemini-3.6-flash` | Model to use (image generation uses its own model ID) |
 | `conversation_id` | no | — | `[cid, rid, rcid]` from previous call for iterative refinement |
 | `temporary` | no | `False` | Don't save generation to Gemini history |
 
@@ -92,7 +92,7 @@ Upload file and ask Gemini about it. Supports video, images, PDF, documents.
 |-------|----------|---------|-------------|
 | `file_path` | yes | — | Absolute path to file |
 | `prompt` | no | `"Describe this file."` | Question or instruction |
-| `model` | no | `gemini-3.0-flash` | Model to use |
+| `model` | no | `gemini-3.6-flash` | Model to use |
 | `temporary` | no | `False` | Don't save conversation to Gemini history |
 
 ```
@@ -110,7 +110,7 @@ Analyze URL — YouTube videos, webpages, articles.
 |-------|----------|---------|-------------|
 | `url` | yes | — | URL to analyze |
 | `prompt` | no | `"Summarize this content."` | Question about the content |
-| `model` | no | `gemini-3.0-flash` | Model to use |
+| `model` | no | `gemini-3.6-flash` | Model to use |
 | `temporary` | no | `False` | Don't save conversation to Gemini history |
 
 ```
@@ -131,9 +131,9 @@ gemini_reset()
 
 | Model | Best for | Notes |
 |-------|----------|-------|
-| `gemini-3.0-flash` | Text chat, analysis | Fast, default for chat |
-| `gemini-3.0-flash-thinking` | Image generation, editing | Nano Banana 2, supports aspect ratios, default for images |
-| `gemini-3.0-pro` | Complex reasoning | Slower, higher quality text |
+| `gemini-3.6-flash` | Text chat, analysis | Fast, default for chat |
+| `gemini-3.5-flash-lite` | Lightweight/fast tasks | Cheapest, fastest |
+| `gemini-3.1-pro` | Complex reasoning, thinking | Slower, higher quality text |
 
 ## Troubleshooting
 

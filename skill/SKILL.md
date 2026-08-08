@@ -1,6 +1,6 @@
 ---
 name: gemini-mcp
-description: Use Google Gemini for image generation, text chat, file analysis, URL/YouTube analysis, and multi-turn conversations via MCP. Triggers on requests to generate images with Gemini, chat with Gemini, analyze files/URLs/videos with Gemini, use Gemini models, or when user asks to create/edit images and needs prompting guidance. Do NOT use for DALL-E, Midjourney, Stable Diffusion, or OpenAI image generation.
+description: Use when user asks you to create/edit images or to analyze an image (when you do not support vision capabilities natively). Always use `gemini_reset` for the first request and use temporary=True to avoid saving to history.
 ---
 
 # Gemini MCP Skill
