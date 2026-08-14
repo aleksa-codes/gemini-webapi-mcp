@@ -17,7 +17,6 @@ uv run gemini-webapi-mcp   # run the MCP server
 |------|---------|
 | Install deps | `uv sync` |
 | Run server | `uv run gemini-webapi-mcp` |
-| Run watermark tests | `pytest tests/test_watermark.py` |
 
 There is no linter, typechecker, or formatter configured. No CI/CD workflows exist.
 
@@ -26,14 +25,13 @@ There is no linter, typechecker, or formatter configured. No CI/CD workflows exi
 All source lives in `src/gemini_webapi_mcp/`. The entire app is essentially one file:
 
 - `__init__.py` — entry point, calls `mcp.run()`
-- `server.py` — MCP tool definitions, GeminiClient patching, watermark removal, cookie resolution
+- `server.py` — MCP tool definitions, GeminiClient patching, cookie resolution
 
 **Entry flow:** `gemini-webapi-mcp` CLI → `__init__.py:main()` → `FastMCP.run()` (stdio transport).
 
 **Key internals:**
 - `_patch_client()` monkey-patches `GeminiClient` to inject browser-compatible request headers/body params for fast image generation, and intercepts response parsing to capture image download tokens.
 - `_fetch_download_url()` calls Google's `c8o8Fe` RPC to get 2x upscaled download URLs.
-- `_remove_watermark()` does deterministic reverse-alpha-blending using calibrated star-shape maps in `assets/*.npy`.
 
 ## Critical conventions
 
@@ -49,7 +47,6 @@ All source lives in `src/gemini_webapi_mcp/`. The entire app is essentially one 
 | `GEMINI_PSID` / `GEMINI_PSIDTS` | Manual cookie override | auto from Chrome |
 | `GEMINI_ACCOUNT_INDEX` | Google account index (0, 1, ...) | `0` |
 | `GEMINI_LANGUAGE` | Response language (`en`, `ru`, `ja`, ...) | `en` |
-| `GEMINI_WM_KEEP` | Set `1` to skip watermark removal | `0` |
 | `GEMINI_GEN_TIMEOUT` | Image generation timeout (seconds) | `600` |
 | `GEMINI_DOWNLOAD_TIMEOUT` | Image download timeout (seconds) | `60` |
 | `GEMINI_SKIP_2X` | Set `1` to skip 2x upscale RPC | `0` |
@@ -59,15 +56,11 @@ All source lives in `src/gemini_webapi_mcp/`. The entire app is essentially one 
 
 ## Testing
 
-Tests are in `tests/test_watermark.py`. They are standalone (can run with `python` or `pytest`), use synthetic + one real fixture image, and test the watermark removal pipeline in isolation (no Gemini auth needed).
-
-```bash
-pytest tests/test_watermark.py -v
-```
+No tests are currently configured.
 
 ## Dependencies
 
-Key: `gemini-webapi` (from GitHub, not PyPI), `mcp`, `browser-cookie3`, `orjson`, `Pillow`, `numpy`, `curl-cffi`.
+Key: `gemini-webapi` (from GitHub, not PyPI), `mcp`, `browser-cookie3`, `orjson`, `curl-cffi`.
 
 The `gemini-webapi` dependency is a git reference (`xob0t/Gemini-API`). It uses `curl_cffi` for TLS fingerprint impersonation. `browser-cookie3` handles Chrome cookie extraction.
 

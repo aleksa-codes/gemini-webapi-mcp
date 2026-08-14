@@ -44,7 +44,6 @@ gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this
 ## Key Facts
 
 - Images saved to `~/Pictures/gemini/` as PNG, 2x upscaled resolution
-- Watermark auto-removed (built-in, no extra dependencies)
 - Always include aspect ratio at the end of the prompt (e.g. "16:9", "9:16", "1:1", "4:3", "3:4")
 - Use `temporary=True` to skip saving to Gemini history
 - Do NOT specify model for image generation — server picks the best one automatically
