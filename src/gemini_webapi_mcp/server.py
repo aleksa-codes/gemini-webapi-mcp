@@ -28,6 +28,16 @@ from mcp.server.fastmcp import FastMCP, Context
 logger = logging.getLogger("gemini_mcp")
 logger.addHandler(logging.StreamHandler(sys.stderr))
 logger.setLevel(logging.INFO)
+logger.propagate = False  # own stderr handler only — root propagation double-prints
+
+# gemini_webapi logs cookie/init progress through loguru at DEBUG; keep it
+# quiet unless someone debugs the library itself.
+try:
+    from loguru import logger as _loguru
+
+    _loguru.disable("gemini_webapi")
+except ImportError:
+    pass
 
 # ---------------------------------------------------------------------------
 # Constants
