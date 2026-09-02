@@ -42,7 +42,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-IMAGES_DIR = Path(os.environ.get("GEMINI_OUTPUT_DIR", "")) if os.environ.get("GEMINI_OUTPUT_DIR") else Path.home() / "Pictures" / "gemini"
+_env_output_dir = os.environ.get("GEMINI_OUTPUT_DIR")
+IMAGES_DIR = Path(_env_output_dir).expanduser().resolve() if _env_output_dir else Path.home() / "Pictures" / "gemini"
 DEFAULT_MODEL = "gemini-3.6-flash"
 
 # Models not yet in gemini_webapi.constants.Model. Keyed by model name; the value
