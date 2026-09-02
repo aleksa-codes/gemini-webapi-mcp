@@ -174,6 +174,7 @@ If cookie auto-detection fails, set them manually:
 | `GEMINI_PSIDTS` | Cookie value `__Secure-1PSIDTS` | auto from Chrome |
 | `GEMINI_LANGUAGE` | Gemini response language (`ru`, `en`, `ja`, ...) | `en` |
 | `GEMINI_ACCOUNT_INDEX` | Google account index (0, 1, 2, ...) | `0` |
+| `GEMINI_OUTPUT_DIR` | Default directory for saved images | `~/Pictures/gemini/` |
 
 ## High Resolution (2x)
 
@@ -213,6 +214,7 @@ Once configured, Claude calls the right tools automatically. Just ask in chat:
 | Task | What to tell Claude |
 |------|---------------------|
 | Generate an image | *"Generate a watercolor cat with Gemini"* |
+| Generate to a specific folder | *"Generate a watercolor cat with Gemini, save it to ~/projects/art"* |
 | Edit an image | *"Edit /path/to/cat.png with Gemini — make the cat gray"* |
 | Iterative refinement | *"Now make the background darker"* (same conversation) |
 | Analyze a video | *"Analyze this video with Gemini: https://youtube.com/watch?v=..."* |
@@ -222,6 +224,7 @@ Tools that Claude will call:
 
 ```
 gemini_generate_image(prompt="a cat in watercolor style")
+gemini_generate_image(prompt="a cat in watercolor style", output_dir="/home/user/art")
 gemini_generate_image(prompt="make it gray", files=["/path/to/cat.png"])
 gemini_generate_image(prompt="make the background darker", conversation_id=["c_abc", "r_123", "rc_456"])
 gemini_chat(prompt="Quick question about cats", temporary=True)

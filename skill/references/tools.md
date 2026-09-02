@@ -57,6 +57,7 @@ Generate new images or edit existing ones.
 | `model` | no | `gemini-3.6-flash` | Model to use (image generation uses its own model ID) |
 | `conversation_id` | no | — | `[cid, rid, rcid]` from previous call for iterative refinement |
 | `temporary` | no | `False` | Don't save generation to Gemini history |
+| `output_dir` | no | `~/Pictures/gemini/` | Directory to save images in (supports ~ and relative paths) |
 
 **Generate:**
 ```
@@ -73,7 +74,12 @@ gemini_generate_image(prompt="make the sky purple", files=["/path/to/image.png"]
 gemini_generate_image(prompt="make it more dramatic", conversation_id=["c_xxx", "r_xxx", "rc_xxx"])
 ```
 
-**Output:** PNG saved to `~/Pictures/gemini/`, 2x upscaled resolution. Returns `conversation_id` for continuation.
+**Output:** PNG saved to `~/Pictures/gemini/` (or custom dir via `output_dir`), 2x upscaled resolution. Returns `conversation_id` for continuation.
+
+**Save to custom directory:**
+```
+gemini_generate_image(prompt="a sunset over the ocean", output_dir="/home/user/projects/art")
+```
 
 **Resolution (2x upscale):**
 - 16:9: 2816x1536 (native 1408x768, auto-upscaled 2x)
@@ -154,6 +160,7 @@ gemini_reset()
 | `GEMINI_PSIDTS` | — | Override `__Secure-1PSIDTS` cookie |
 | `GEMINI_ACCOUNT_INDEX` | `0` | Google account index (for multi-account Chrome profiles) |
 | `GEMINI_LANGUAGE` | `en` | Language for Gemini responses |
+| `GEMINI_OUTPUT_DIR` | `~/Pictures/gemini/` | Default directory for saved images |
 
 **Cookie auth on headless/remote servers:**
 
