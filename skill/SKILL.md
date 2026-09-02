@@ -26,6 +26,11 @@ gemini_chat(prompt="Explain quantum computing")
 gemini_generate_image(prompt="A cinematic wide shot of a futuristic city at sunset, volumetric fog, neon reflections on wet streets")
 ```
 
+**Generate to custom directory:**
+```
+gemini_generate_image(prompt="A cinematic wide shot of a futuristic city at sunset", output_dir="/home/user/project/assets")
+```
+
 **Edit image:**
 ```
 gemini_generate_image(prompt="Change the background to a sunset beach. Keep everything else exactly the same.", files=["/path/to/image.png"])
@@ -44,7 +49,7 @@ gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this
 ## Key Facts
 
 - Call `gemini_reset` before the first request in a session; use `temporary=True` to skip saving to Gemini history
-- Images saved to `~/Pictures/gemini/` as PNG, 2x upscaled resolution
+- Images saved to `~/Pictures/gemini/` as PNG, 2x upscaled resolution. Use `output_dir` to save elsewhere, or set `GEMINI_OUTPUT_DIR` env var for a global default.
 - Always include aspect ratio at the end of the prompt (e.g. "16:9", "9:16", "1:1", "4:3", "3:4")
 - Do NOT specify model for image generation — server picks the best one automatically
 - Do NOT re-verify generated images by sending them back through `gemini_upload_file`. Trust the generation response (returned paths + text). Only analyze an image when the user explicitly asks you to look at it.

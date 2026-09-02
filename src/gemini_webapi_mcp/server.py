@@ -42,7 +42,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-IMAGES_DIR = Path.home() / "Pictures" / "gemini"
+_env_output_dir = os.environ.get("GEMINI_OUTPUT_DIR")
+IMAGES_DIR = Path(_env_output_dir).expanduser().resolve() if _env_output_dir else Path.home() / "Pictures" / "gemini"
 DEFAULT_MODEL = "gemini-3.6-flash"
 
 # Models not yet in gemini_webapi.constants.Model. Keyed by model name; the value
@@ -686,6 +687,7 @@ async def gemini_generate_image(
     files: Optional[list[str]] = None,
     conversation_id: Optional[list[str]] = None,
     temporary: bool = False,
+    output_dir: Optional[str] = None,
 ) -> str:
     """Generate or edit images with Gemini.
 
@@ -696,7 +698,8 @@ async def gemini_generate_image(
     in the same conversation thread (e.g. "make it more dramatic", "add rain").
     You can also use a cid from the Gemini web URL (gemini.google.com/app/{cid}).
 
-    Images are saved to ~/Pictures/gemini/ and full file paths are returned.
+    Images are saved to ~/Pictures/gemini/ by default. Use output_dir to save
+    elsewhere (e.g. output_dir="/home/user/project/assets").
 
     Args:
         prompt: Description of the image to generate, or editing instruction
@@ -708,6 +711,8 @@ async def gemini_generate_image(
                          gemini_generate_image response to continue the conversation.
                          Passing just [cid] (from browser URL) also works.
         temporary: If True, the generation won't be saved to Gemini history.
+        output_dir: Directory to save images in. Supports ~ and relative paths.
+                    Defaults to ~/Pictures/gemini/ (or GEMINI_OUTPUT_DIR env var).
 
     Returns:
         JSON with generated image paths, conversation_id for continuation, or an error message.
@@ -718,6 +723,9 @@ async def gemini_generate_image(
     _temporary_mode = temporary
     try:
         client = _get_client(ctx)
+
+        # Resolve output directory: per-call param > IMAGES_DIR (which respects GEMINI_OUTPUT_DIR)
+        save_dir = Path(output_dir).expanduser().resolve() if output_dir else IMAGES_DIR
 
         # Validate input files
         resolved_files = []
@@ -782,7 +790,7 @@ async def gemini_generate_image(
         _image_tokens.clear()  # clean up any leftover tokens
         t = _stage("c8o8Fe (2x url) done", t)
 
-        IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        save_dir.mkdir(parents=True, exist_ok=True)
         saved = []
 
         for i, image in enumerate(response.images):
@@ -812,7 +820,7 @@ async def gemini_generate_image(
                 # Without this gating, an un-upscaled URL with no suffix drops to a
                 # ~382px thumbnail instead of the ~896px preview.
                 filepath = await image.save(
-                    path=str(IMAGES_DIR),
+                    path=str(save_dir),
                     filename=f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}.png",
                     verbose=False,
                     full_size=not has_upscale,
@@ -826,7 +834,7 @@ async def gemini_generate_image(
                 continue
 
             title = getattr(image, "title", None) or f"image_{i}"
-            saved.append({"title": title, "path": filepath, "dir": str(IMAGES_DIR)})
+            saved.append({"title": title, "path": filepath, "dir": str(save_dir)})
 
         # For response: prefer chat metadata (clean cid/rid/rcid), fall back to raw
         if chat:
@@ -835,7 +843,7 @@ async def gemini_generate_image(
             conv_id = metadata[:3] if metadata and metadata[0] else None
         result = {
             "text": response.text or "",
-            "images_saved_to": str(IMAGES_DIR),
+            "images_saved_to": str(save_dir),
             "images": saved,
             "conversation_id": conv_id,
         }

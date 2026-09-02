@@ -38,7 +38,7 @@ All source lives in `src/gemini_webapi_mcp/`. The entire app is essentially one 
 - **stdout = MCP protocol only.** All logging goes to stderr. Never print to stdout.
 - **Image generation is serialized.** `_image_lock` (asyncio.Lock) ensures one concurrent image generation call. `_image_mode` global toggles request patching on/off per call.
 - **Image generation has a hard timeout** (default 600s, `GEMINI_GEN_TIMEOUT`). Gemini responses are erratic (22s–345s).
-- **Images save to `~/Pictures/gemini/`.** The directory is created automatically.
+- **Images save to `~/Pictures/gemini/`** by default. Override with `GEMINI_OUTPUT_DIR` env var or the `output_dir` parameter on `gemini_generate_image`.
 
 ## Environment variables
 
@@ -53,6 +53,7 @@ All source lives in `src/gemini_webapi_mcp/`. The entire app is essentially one 
 | `GEMINI_NO_REMAP` | Set `1` to skip model-ID remap in headers | `0` |
 | `GEMINI_DEBUG_TIMING` | Set `1` to log per-stage wall-time | `0` |
 | `GEMINI_IMAGE_MODEL_ID` | Override model ID for image gen requests | `56fdd199312815e2` |
+| `GEMINI_OUTPUT_DIR` | Default directory for saved images | `~/Pictures/gemini/` |
 
 ## Testing
 
