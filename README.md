@@ -145,6 +145,8 @@ The server reads cookies from Chrome automatically via `browser-cookie3`.
 
 > **Multiple Google accounts?** Set `GEMINI_ACCOUNT_INDEX` — the account number from Chrome (0 = first, 1 = second, ...). Check the order by clicking your avatar on gemini.google.com.
 
+> **Gemini answers "Are you signed in?" or error 1096 while Chrome is logged in?** Update the server. Older versions could select cookies from Google country domains such as `.google.com.bd` or `.google.co.uk`, which are not valid for Gemini. The server now takes cookies only from `.google.com`.
+
 If cookie auto-detection fails, set them manually:
 
 1. Open Chrome DevTools on gemini.google.com → Application → Cookies

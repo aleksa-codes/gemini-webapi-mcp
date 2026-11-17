@@ -74,6 +74,12 @@ gemini_generate_image(prompt="make the sky purple", files=["/path/to/image.png"]
 gemini_generate_image(prompt="make it more dramatic", conversation_id=["c_xxx", "r_xxx", "rc_xxx"])
 ```
 
+**Editing Gemini's previous output: prefer `conversation_id` over re-passing `files`.**
+To change an image Gemini just generated, pass back its `conversation_id`
+instead of re-uploading the PNG via `files`. This lets Gemini continue from its
+previous output without a re-upload. Use `files` for an external source image or
+when the original conversation is unavailable.
+
 **Output:** PNG saved to `~/Pictures/gemini/` (or custom dir via `output_dir`), 2x upscaled resolution. Returns `conversation_id` for continuation.
 
 **Save to custom directory:**
