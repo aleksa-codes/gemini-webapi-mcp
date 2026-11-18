@@ -1,245 +1,96 @@
-<h1 align="center">gemini-webapi-mcp</h1>
+# Gemini WebAPI MCP
 
-<p align="center">
-  MCP server for Google Gemini — image generation/editing, chat and file analysis via browser cookies.<br>
-  No API keys. Free.
-</p>
+Generate and edit images, chat with Gemini, or analyze files and URLs from an
+MCP client. The server uses your signed-in Gemini web session, not the official
+API. If you only need images, use the
+[image-only server](https://github.com/aleksa-codes/gemini-webapi-image-mcp).
 
-<p align="center">
-  <a href="https://github.com/AndyShaman/gemini-webapi-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/AndyShaman/gemini-webapi-mcp?style=flat-square&color=green" alt="License"></a>
-  <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/MCP-compatible-8A2BE2?style=flat-square" alt="MCP">
-  <a href="https://github.com/AndyShaman/gemini-webapi-mcp/stargazers"><img src="https://img.shields.io/github/stars/AndyShaman/gemini-webapi-mcp?style=flat-square&color=yellow" alt="Stars"></a>
-</p>
+## Connect
 
-<p align="center">
-  <a href="https://t.me/AI_Handler"><img src="https://img.shields.io/badge/Telegram-Author's_Channel-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
-  &nbsp;
-  <a href="https://www.youtube.com/channel/UCLkP6wuW_P2hnagdaZMBtCw"><img src="https://img.shields.io/badge/YouTube-Author's_Channel-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube"></a>
-</p>
+Install [uv](https://docs.astral.sh/uv/) and sign in at
+[gemini.google.com](https://gemini.google.com) in Chrome on the machine running
+the MCP process. The package declares Python 3.10 or later.
 
----
+For OpenCode, omit `--global` to register only for the current project:
 
-## Features
-
-- **Image generation** from text descriptions (Nano Banana 2 with aspect ratio support)
-- **2x resolution** — automatically downloads upscaled version (2048x2048 → 2816x1536 and above)
-- **Image editing** — send an image + prompt to get a modified version
-- **File analysis** — video, images, PDF, documents
-- **Text chat** with Gemini (Flash, Pro, Flash-Thinking)
-- **Auto-authentication** via Chrome browser cookies
-
-## Quick Start
-
-### 1. Log into Gemini
-
-Open Chrome, go to [gemini.google.com](https://gemini.google.com) and sign in.
-
-### 2. Install the MCP server
-
-**From GitHub (no clone needed):**
-
-```bash
-uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
+```sh
+opencode mcp add gemini --global -- uvx --from git+https://github.com/aleksa-codes/gemini-webapi-mcp.git gemini-webapi-mcp
 ```
 
-**Local install:**
-
-```bash
-git clone https://github.com/AndyShaman/gemini-webapi-mcp.git
-cd gemini-webapi-mcp
-uv sync
-uv run gemini-webapi-mcp
-```
-
-### 3. Add MCP config
-
-<details>
-<summary><b>Claude Code</b></summary>
-
-```bash
-claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
-```
-
-Or add manually to `.mcp.json` in your project root:
+For Claude Code or Claude Desktop, add the same stdio server to the client's
+MCP configuration:
 
 ```json
 {
   "mcpServers": {
     "gemini": {
-      "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/aleksa-codes/gemini-webapi-mcp.git",
+        "gemini-webapi-mcp"
+      ]
     }
   }
 }
 ```
 
-</details>
-
-<details>
-<summary><b>Claude Desktop</b></summary>
-
-Add to Claude Desktop config:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "gemini": {
-      "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Other MCP clients</b></summary>
-
-Use the standard MCP stdio config:
-
-```json
-{
-  "mcpServers": {
-    "gemini": {
-      "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
-    }
-  }
-}
-```
-
-Config file path depends on your MCP client.
-
-</details>
-**Local install (after cloning)** — replace args with:
-
-```json
-"args": ["--directory", "/path/to/gemini-webapi-mcp", "run", "gemini-webapi-mcp"]
-```
-
-### 4. Install the skill for Claude Code (optional)
-
-The [`skill/`](skill/) folder contains a Claude Code skill — prompting tips, tool documentation and an image generation guide. The skill auto-activates when working with Gemini.
-
-```bash
-cp -r skill ~/.claude/skills/gemini-mcp
-```
-
-### 5. Verify
-
-Run the server manually — if it initializes without errors, everything works:
-
-```bash
-uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
-```
-
-Then open Claude Code or Claude Desktop and try: *"Generate a watercolor cat image with Gemini"*.
-
-## Authentication
-
-The server reads cookies from Chrome automatically via `browser-cookie3`.
-
-> **Multiple Google accounts?** Set `GEMINI_ACCOUNT_INDEX` — the account number from Chrome (0 = first, 1 = second, ...). Check the order by clicking your avatar on gemini.google.com.
-
-> **Gemini answers "Are you signed in?" or error 1096 while Chrome is logged in?** Update the server. Older versions could select cookies from Google country domains such as `.google.com.bd` or `.google.co.uk`, which are not valid for Gemini. The server now takes cookies only from `.google.com`.
-
-If cookie auto-detection fails, set them manually:
-
-1. Open Chrome DevTools on gemini.google.com → Application → Cookies
-2. Copy `__Secure-1PSID` and `__Secure-1PSIDTS` values
-3. Add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "gemini": {
-      "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
-      "env": {
-        "GEMINI_PSID": "your__Secure-1PSID_value",
-        "GEMINI_PSIDTS": "your__Secure-1PSIDTS_value"
-      }
-    }
-  }
-}
-```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GEMINI_PSID` | Cookie value `__Secure-1PSID` | auto from Chrome |
-| `GEMINI_PSIDTS` | Cookie value `__Secure-1PSIDTS` | auto from Chrome |
-| `GEMINI_LANGUAGE` | Gemini response language (`ru`, `en`, `ja`, ...) | `en` |
-| `GEMINI_ACCOUNT_INDEX` | Google account index (0, 1, 2, ...) | `0` |
-| `GEMINI_OUTPUT_DIR` | Default directory for saved images | `~/Pictures/gemini/` |
-
-## High Resolution (2x)
-
-The server automatically requests an upscaled version of each generated image — the same mechanism used by the "Download" button in Gemini's web interface. Google performs server-side upscaling, delivering images at 2x resolution:
-
-| Model | Native | 2x (downloaded) |
-|-------|--------|-----------------|
-| Flash-Thinking (16:9) | 1408x768 | 2816x1536 |
-| Flash-Thinking (9:16) | 768x1376 | 1536x2752 |
-| Flash-Thinking (1:1) | 1024x1024 | 2048x2048 |
-
-If the 2x version is unavailable (timeout, network error), the server automatically falls back to native resolution.
+For a local checkout, use `uv --directory /absolute/path/to/gemini-webapi-mcp run gemini-webapi-mcp`.
+Once connected, try asking the client to generate a watercolor cat or summarize
+a public YouTube video.
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `gemini_generate_image` | Generate new or edit existing images |
-| `gemini_upload_file` | Analyze files — video, images, PDF, documents |
-| `gemini_analyze_url` | Analyze URLs — YouTube videos, webpages, articles |
-| `gemini_chat` | Text chat (single or multi-turn) |
-| `gemini_start_chat` | Start a multi-turn session |
-| `gemini_reset` | Re-initialize client on auth errors |
+| Tool                                | What it does                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `gemini_generate_image`             | Generate an image, edit files passed in `files`, or refine a result using its `conversation_id`. |
+| `gemini_chat` / `gemini_start_chat` | Ask a question or start a multi-turn session.                                                    |
+| `gemini_upload_file`                | Analyze a local image, video, PDF, or document.                                                  |
+| `gemini_analyze_url`                | Analyze a web page or YouTube URL.                                                               |
+| `gemini_reset`                      | Reinitialize the client and read authentication again.                                           |
 
-## Models
+Images save to `~/Pictures/gemini/` by default. Use `output_dir` per call or
+`GEMINI_OUTPUT_DIR` for the server. The server requests 2× downloads and falls
+back to native resolution if unavailable. Pass `temporary: true` on supported
+calls if you do not want the request saved in Gemini history.
+See the [tool reference](skill/references/tools.md) for parameters and models.
 
-| Model | Default for | Notes |
-|-------|-------------|-------|
-| `gemini-3.6-flash` | chat, file analysis | Fast |
-| `gemini-3.5-flash-lite` | — | Lightweight, fastest |
-| `gemini-3.1-pro` | — | Complex reasoning |
+## Authentication and settings
 
-## Usage Examples
+Leave cookie overrides unset when Chrome authentication works. Set
+`GEMINI_ACCOUNT_INDEX` for multiple signed-in accounts (default `0`) or
+`CHROME_COOKIE_FILE` for a custom Chrome cookie file.
 
-Once configured, Claude calls the right tools automatically. Just ask in chat:
+If the MCP process cannot access Chrome, supply your own Gemini session values
+through private environment settings as `GEMINI_PSID` (`__Secure-1PSID`) and,
+preferably, `GEMINI_PSIDTS` (`__Secure-1PSIDTS`). Never commit or share them.
+If sign-in fails, refresh the session and call `gemini_reset`. Error 1096 can
+also be account-side; it does not always mean the cookies are invalid.
 
-| Task | What to tell Claude |
-|------|---------------------|
-| Generate an image | *"Generate a watercolor cat with Gemini"* |
-| Generate to a specific folder | *"Generate a watercolor cat with Gemini, save it to ~/projects/art"* |
-| Edit an image | *"Edit /path/to/cat.png with Gemini — make the cat gray"* |
-| Iterative refinement | *"Now make the background darker"* (same conversation) |
-| Analyze a video | *"Analyze this video with Gemini: https://youtube.com/watch?v=..."* |
-| Analyze a file | *"Upload /path/to/doc.pdf to Gemini and summarize it"* |
+| Setting                   | Default                        |
+| ------------------------- | ------------------------------ |
+| `GEMINI_LANGUAGE`         | `en`                           |
+| `GEMINI_GEN_TIMEOUT`      | 600 seconds                    |
+| `GEMINI_DOWNLOAD_TIMEOUT` | 60 seconds                     |
+| `GEMINI_SKIP_2X`          | `0`; set `1` to skip upscaling |
 
-Tools that Claude will call:
+Advanced diagnostics: `GEMINI_DEBUG_TIMING=1` logs timings,
+`GEMINI_NO_REMAP=1` disables model header remapping, and
+`GEMINI_IMAGE_MODEL_ID` overrides the internal image model ID.
 
-```
-gemini_generate_image(prompt="a cat in watercolor style")
-gemini_generate_image(prompt="a cat in watercolor style", output_dir="/home/user/art")
-gemini_generate_image(prompt="make it gray", files=["/path/to/cat.png"])
-gemini_generate_image(prompt="make the background darker", conversation_id=["c_abc", "r_123", "rc_456"])
-gemini_chat(prompt="Quick question about cats", temporary=True)
-gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this video")
-gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Summarize key points")
-```
+## For agents
 
-## Acknowledgements
+See [AGENTS.md](AGENTS.md) for contributor checks. To use the server,
+install the optional [Gemini MCP skill](skill/SKILL.md) by copying the whole
+`skill/` directory into your client's skills directory as `gemini-mcp`
+(for example, `~/.claude/skills/gemini-mcp` in Claude Code).
 
-This project is built on top of [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) by [@HanaokaYuzu](https://github.com/HanaokaYuzu) (fork by [@xob0t](https://github.com/xob0t/Gemini-API) with curl_cffi support) — a reverse-engineered async Python wrapper for the Google Gemini web app. Licensed under AGPL-3.0.
+## Credits
+
+Forked from [AndyShaman/gemini-webapi-mcp](https://github.com/AndyShaman/gemini-webapi-mcp).
+Uses [HanaokaYuzu's Gemini-API](https://github.com/HanaokaYuzu/Gemini-API)
+via the [xob0t fork](https://github.com/xob0t/Gemini-API).
 
 ## License
 
-[AGPL-3.0](LICENSE) — free to use, modify, and distribute, provided the source code remains open.
-
-**[@AndyShaman](https://github.com/AndyShaman)** · [gemini-webapi-mcp](https://github.com/AndyShaman/gemini-webapi-mcp)
+[AGPL-3.0-or-later](LICENSE)
